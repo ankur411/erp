@@ -1,0 +1,42 @@
+# Dependency directories
+node_modules/
+frontend/node_modules/
+backend/venv/
+backend/.pytest_cache/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/.vercel/
+
+# Python caching & build
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+backend/__pycache__/
+backend/app/__pycache__/
+
+# Environments
+.env
+.env.*
+!.env.example
+frontend/.env
+frontend/.env.*
+backend/.env
+backend/.env.*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Other tools
+frontend/*.tsbuildinfo
+frontend/next-env.d.ts

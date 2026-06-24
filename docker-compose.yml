@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  db:
+    image: mysql:8.0
+    container_name: erp_database
+    restart: always
+    environment:
+      MYSQL_DATABASE: supplier_erp
+      MYSQL_ROOT_PASSWORD: rootpassword
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: erp_backend
+    restart: always
+    environment:
+      - DATABASE_URL=mysql+aiomysql://root:rootpassword@db:3306/supplier_erp
+      - DATABASE_URL_SYNC=mysql+pymysql://root:rootpassword@db:3306/supplier_erp
+      - ENV=production
+      - PROJECT_NAME=SupplierERP
+      - API_V1_STR=/api/v1
+      - CLERK_API_URL=https://api.clerk.com/v1
+      - CLERK_JWKS_URL=https://api.clerk.com/v1/jwks
+    depends_on:
+      - db
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: erp_frontend
+    restart: always
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_placeholder
+      - CLERK_SECRET_KEY=sk_test_placeholder
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+
+  nginx:
+    image: nginx:alpine
+    container_name: erp_proxy
+    restart: always
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend
+      - frontend
+
+volumes:
+  db_data:
