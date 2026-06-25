@@ -22,10 +22,12 @@ import {
   Globe,
   Trash2,
   HardDrive,
-  Edit
+  Edit,
+  LogOut
 } from "lucide-react";
 import { useERPStore } from "@/lib/store";
 import { formatSmartNumber } from "@/lib/utils";
+import { SafeSignOutButton } from "@/components/SafeSignOutButton";
 
 export default function AdminPortalPage() {
   const [darkMode, setDarkMode] = useState<boolean>(true);
@@ -383,6 +385,15 @@ export default function AdminPortalPage() {
           >
             {darkMode ? <Sun className="h-4 w-4 text-amber-400" /> : <Moon className="h-4 w-4" />}
           </button>
+
+          <div className="h-4 w-[1px] bg-zinc-200 dark:bg-zinc-850"></div>
+
+          <SafeSignOutButton 
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-250 hover:bg-zinc-100 text-zinc-650 hover:text-zinc-950 dark:border-zinc-800 dark:hover:bg-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-100 transition-all text-xs font-bold"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            <span>Sign Out</span>
+          </SafeSignOutButton>
         </div>
       </header>
 

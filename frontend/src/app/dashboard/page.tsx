@@ -26,8 +26,10 @@ import {
   FileSpreadsheet,
   HelpCircle,
   DollarSign,
-  Check
+  Check,
+  LogOut
 } from "lucide-react";
+import { SafeSignOutButton } from "@/components/SafeSignOutButton";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -272,22 +274,31 @@ export default function DashboardPage() {
         </div>
 
         {/* User / Setting Info bottom */}
-        <div className="p-4 border-t border-zinc-200 dark:border-zinc-800 flex items-center justify-between bg-zinc-50/50 dark:bg-zinc-900/50">
-          <div className="flex items-center gap-2">
-            <div className="h-7 w-7 rounded-full bg-zinc-300 dark:bg-zinc-700 flex items-center justify-center font-bold text-xs">
-              AG
+        <div className="p-4 border-t border-zinc-200 dark:border-zinc-800 flex flex-col gap-3 bg-zinc-50/50 dark:bg-zinc-900/50">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="h-7 w-7 rounded-full bg-zinc-300 dark:bg-zinc-700 flex items-center justify-center font-bold text-xs">
+                AG
+              </div>
+              <div>
+                <div className="text-xs font-semibold leading-none">Aarush Gupta</div>
+                <span className="text-[10px] text-zinc-400 uppercase tracking-wide font-medium">Clerk Auth Session</span>
+              </div>
             </div>
-            <div>
-              <div className="text-xs font-semibold leading-none">Aarush Gupta</div>
-              <span className="text-[10px] text-zinc-400 uppercase tracking-wide font-medium">Clerk Auth Session</span>
-            </div>
+            <button 
+              onClick={() => setDarkMode(!darkMode)}
+              className="p-1.5 rounded hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-400 dark:text-zinc-500"
+            >
+              {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </button>
           </div>
-          <button 
-            onClick={() => setDarkMode(!darkMode)}
-            className="p-1.5 rounded hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-400 dark:text-zinc-500"
+
+          <SafeSignOutButton 
+            className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg border border-zinc-200 hover:bg-zinc-100 text-zinc-650 hover:text-zinc-950 dark:border-zinc-800 dark:hover:bg-zinc-850 dark:text-zinc-400 dark:hover:text-zinc-100 transition-all text-xs font-bold"
           >
-            {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-          </button>
+            <LogOut className="h-3.5 w-3.5" />
+            <span>Sign Out</span>
+          </SafeSignOutButton>
         </div>
       </aside>
 
