@@ -1,9 +1,8 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 
-// Protect all routes except the public ones (like home, login, signup, webhooks)
-const isClientPublicRoute = createRouteMatcher([
-  "/",
+// Protect all routes except the public ones (like login, signup, webhooks)
+const isPublicRoute = createRouteMatcher([
   "/sign-in(.*)",
   "/sign-up(.*)",
   "/api/webhooks(.*)"
@@ -11,9 +10,9 @@ const isClientPublicRoute = createRouteMatcher([
 
 export default clerkMiddleware(async (auth, request) => {
   const isClerkEnabled = process.env.ENABLE_CLERK === "true" || !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
-
+  
   if (isClerkEnabled) {
-    const isPublic = isClientPublicRoute(request);
+    const isPublic = isPublicRoute(request);
     if (!isPublic) {
       await auth.protect();
     }
