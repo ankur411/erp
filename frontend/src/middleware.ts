@@ -16,7 +16,7 @@ const isAdminPublicRoute = createRouteMatcher([
 ]);
 
 export default clerkMiddleware(async (auth, request) => {
-  const isClerkEnabled = process.env.ENABLE_CLERK === "true";
+  const isClerkEnabled = process.env.ENABLE_CLERK === "true" || !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
   const isAdminDeployment = process.env.NEXT_PUBLIC_IS_ADMIN_DEPLOYMENT === "true";
   const url = request.nextUrl.clone();
 
