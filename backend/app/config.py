@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     ENV: str = "development"
     PROJECT_NAME: str = "SupplierERP API"
     API_V1_STR: str = "/api/v1"
+    ALLOWED_ORIGINS: str = ""
     
     # TiDB Connection Settings (MySQL Dialect)
     # E.g. mysql+aiomysql://user:password@host:port/dbname?ssl_ca=/path/to/ca.pem

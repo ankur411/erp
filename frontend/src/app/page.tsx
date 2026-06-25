@@ -47,6 +47,7 @@ import { useERPStore, Supplier, Product, PurchaseOrder, Invoice, Payment } from 
 type TabType = "dashboard" | "suppliers" | "products" | "inventory" | "purchase" | "finance" | "tenant_control";
 
 export default function DashboardPage() {
+  const adminPortalUrl = process.env.NEXT_PUBLIC_ADMIN_PORTAL_URL;
   const [activeTab, setActiveTab] = useState<TabType>("dashboard");
   const [darkMode, setDarkMode] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -204,18 +205,22 @@ export default function DashboardPage() {
           </div>
 
           {/* Platform Admin Portal Access */}
-          <div className="p-3 mx-3 mt-3 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/40 rounded-xl">
-            <Link 
-              href="/admin"
-              className="flex items-center justify-between text-xs font-bold text-emerald-800 dark:text-emerald-450 hover:opacity-90 transition-opacity"
-            >
-              <div className="flex items-center gap-2">
-                <Shield className="h-4 w-4 text-emerald-600 dark:text-emerald-500" />
-                <span>Platform Admin Portal</span>
-              </div>
-              <ChevronRight className="h-3 w-3" />
-            </Link>
-          </div>
+          {adminPortalUrl && (
+            <div className="p-3 mx-3 mt-3 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/40 rounded-xl">
+              <a 
+                href={adminPortalUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-between text-xs font-bold text-emerald-800 dark:text-emerald-450 hover:opacity-90 transition-opacity"
+              >
+                <div className="flex items-center gap-2">
+                  <Shield className="h-4 w-4 text-emerald-600 dark:text-emerald-500" />
+                  <span>Platform Admin Portal</span>
+                </div>
+                <ChevronRight className="h-3 w-3" />
+              </a>
+            </div>
+          )}
 
           {/* Quick Role Toggle (For Demoing RBAC Security Gateways) */}
           <div className="px-4 py-3 bg-zinc-50 dark:bg-zinc-900/50 border-b border-zinc-200 dark:border-zinc-800">

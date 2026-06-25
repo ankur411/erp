@@ -20,24 +20,44 @@ Make sure you have active accounts and credentials ready for the following servi
 
 ---
 
-## 2. Frontend Deployment on Vercel
+## 2. Frontend Deployments on Vercel
 
-Vercel is optimal for Next.js App Router deployments. It offers automatic build optimization, edge routing, and seamless integration with Clerk.
+The frontend codebase supports two separate Vercel deployments:
+1. **Client ERP Portal**: The main SaaS interface for corporate tenants.
+2. **Platform Admin Portal**: The master control plane for administering multi-tenant subscriptions and platform configurations.
 
-### Step-by-Step Setup
+---
+
+### 2.1 Client ERP Portal Setup
 1. Log in to [Vercel](https://vercel.com/) and click **Add New** > **Project**.
-2. Import your GitHub repository containing the **Supplier ERP** codebase.
-3. In the project setup panel, configure the following settings:
+2. Import your GitHub repository.
+3. Configure the following settings:
    - **Framework Preset**: `Next.js`
-   - **Root Directory**: `frontend` (Click **Edit** and choose the `frontend` subdirectory).
+   - **Root Directory**: `frontend`
    - **Build Command**: `npm run build`
    - **Output Directory**: `.next`
    - **Install Command**: `npm install`
-4. Expand the **Environment Variables** section and add the required variables listed below.
-5. Click **Deploy**. Vercel will build the frontend and provide a production domain (e.g., `https://supplier-erp.vercel.app`).
+4. Expand **Environment Variables** and add the required variables (see the table below). Ensure `NEXT_PUBLIC_IS_ADMIN_DEPLOYMENT` is NOT set (or set to `false`).
+5. Click **Deploy**.
+
+---
+
+### 2.2 Platform Admin Portal Setup
+1. In your Vercel Dashboard, add another new **Project** from the same GitHub repository.
+2. Configure the same settings as the Client Portal:
+   - **Framework Preset**: `Next.js`
+   - **Root Directory**: `frontend`
+   - **Build Command**: `npm run build`
+   - **Output Directory**: `.next`
+   - **Install Command**: `npm install`
+3. Expand **Environment Variables** and add the required variables. Importantly:
+   - Set `NEXT_PUBLIC_IS_ADMIN_DEPLOYMENT` to `true`.
+4. Click **Deploy**.
+
+---
 
 ### Frontend Environment Variables
-Set the following keys in your Vercel Dashboard:
+Configure the following keys in your Vercel Dashboards:
 
 | Variable Name | Example Value | Description |
 | :--- | :--- | :--- |
@@ -49,6 +69,8 @@ Set the following keys in your Vercel Dashboard:
 | `NEXT_PUBLIC_PUSHER_KEY` | `pusher_key_...` | Pusher instance publishable client key. |
 | `NEXT_PUBLIC_PUSHER_CLUSTER` | `ap2` | Pusher cluster zone location. |
 | `ENABLE_CLERK` | `true` | Enables active Clerk middleware checks. |
+| `NEXT_PUBLIC_IS_ADMIN_DEPLOYMENT` | `true` or `false` | **[NEW]** Set to `true` ONLY on the Admin Portal deployment. Enables admin routing rewrites. |
+| `NEXT_PUBLIC_ADMIN_PORTAL_URL` | `https://erp-admin.vercel.app` | **[NEW]** Set on the Client Portal deployment to point to the separate Admin Portal domain. Enables the sidebar link. |
 
 ---
 
@@ -56,13 +78,23 @@ Set the following keys in your Vercel Dashboard:
 
 Since FastAPI is a persistent Python web application, it is best suited for hosting platforms like Railway, Render, or Fly.io that support Docker container runtimes.
 
-### Step-by-Step Setup (Railway Example)
+### 3.1 Railway Setup
 1. Log in to [Railway](https://railway.app/) and create a new project.
 2. Select **Deploy from GitHub repository** and import the project.
 3. In settings, change the **Root Directory** to `backend`.
 4. Railway will automatically detect the `Dockerfile` in the root of the backend directory.
 5. Set the required **Environment Variables** (see table below).
 6. Deploy the service. Railway will build the Docker container and expose a public port mapping (e.g., `https://supplier-erp-production.up.railway.app`).
+
+### 3.2 Render Setup
+1. Log in to [Render](https://render.com/) and click **New** > **Web Service**.
+2. Connect your GitHub repository.
+3. In the configuration panel:
+   - **Name**: `supplier-erp-backend`
+   - **Language**: `Docker`
+   - **Root Directory**: `backend` (Ensure this is set under the **Advanced** section so Render builds using the Dockerfile inside the backend directory).
+4. Under the **Environment Variables** section, add the required backend variables (see table below).
+5. Click **Create Web Service**. Render will automatically build the container and provide a public URL (e.g., `https://supplier-erp-backend.onrender.com`).
 
 ### Backend Environment Variables
 Configure these variables in your backend service panel:
@@ -83,6 +115,7 @@ Configure these variables in your backend service panel:
 | `R2_BUCKET_NAME` | `supplier-erp-documents` | Name of the bucket. |
 | `REDIS_URL` | `redis://default:pass@redis-host:6379/0` | Deployed Redis instance for background jobs. |
 | `ENVIRONMENT` | `production` | Enables production security configs (disables fallback mock credentials). |
+| `ALLOWED_ORIGINS` | `https://erp-delta-hazel.vercel.app,https://erp-admin.vercel.app` | **[NEW]** Comma-separated list of allowed CORS origins. MUST include both portal domains. |
 
 ---
 

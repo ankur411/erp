@@ -29,6 +29,10 @@ origins = [
     "https://erp-delta-hazel.vercel.app",
 ]
 
+if settings.ALLOWED_ORIGINS:
+    extra_origins = [origin.strip() for origin in settings.ALLOWED_ORIGINS.split(",") if origin.strip()]
+    origins.extend(extra_origins)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
