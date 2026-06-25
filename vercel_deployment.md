@@ -96,6 +96,17 @@ Since FastAPI is a persistent Python web application, it is best suited for host
 4. Under the **Environment Variables** section, add the required backend variables (see table below).
 5. Click **Create Web Service**. Render will automatically build the container and provide a public URL (e.g., `https://supplier-erp-backend.onrender.com`).
 
+### 3.3 Vercel Setup (100% Free, No Credit Card Required)
+If you do not want to add payment details on Render or Railway, you can host the Python FastAPI backend directly on **Vercel** as a Serverless Function.
+
+1. Go to [Vercel](https://vercel.com/) and click **Add New** > **Project**.
+2. Select your `erp` GitHub repository.
+3. In the project configuration settings:
+   - **Framework Preset**: Select `Other`.
+   - **Root Directory**: Set to **`backend`** (This directs Vercel to look inside the `backend` folder where `vercel.json` is located).
+4. Expand **Environment Variables** and add all required backend variables (see table below).
+5. Click **Deploy**. Vercel will automatically read `backend/vercel.json`, install all dependencies from `backend/requirements.txt`, compile the serverless function, and expose your API (e.g., `https://supplier-erp-backend.vercel.app`).
+
 ### Backend Environment Variables
 Configure these variables in your backend service panel:
 
