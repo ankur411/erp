@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional
 from datetime import datetime
 from app.modules.inventory.schemas import ProductResponse
@@ -17,8 +17,7 @@ class PurchaseOrderItemResponse(PurchaseOrderItemBase):
     total_cost: float
     product: ProductResponse
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # Purchase Order Schemas
 class PurchaseOrderBase(BaseModel):
@@ -52,5 +51,4 @@ class PurchaseOrderResponse(PurchaseOrderBase):
     items: List[PurchaseOrderItemResponse] = []
     supplier: SupplierResponse
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

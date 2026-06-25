@@ -21,9 +21,11 @@ import {
   Key,
   Globe,
   Trash2,
-  HardDrive
+  HardDrive,
+  Edit
 } from "lucide-react";
 import { useERPStore } from "@/lib/store";
+import { formatSmartNumber } from "@/lib/utils";
 
 export default function AdminPortalPage() {
   const [darkMode, setDarkMode] = useState<boolean>(true);
@@ -31,6 +33,55 @@ export default function AdminPortalPage() {
   const [showAddTenant, setShowAddTenant] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
   
+  // Tab state
+  const [activeTab, setActiveTab] = useState<"overview" | "users" | "plans">("overview");
+
+  // Live analytics state
+  const [liveAnalytics, setLiveAnalytics] = useState({
+    total_organizations: 0,
+    total_active_users: 0,
+    total_suppliers: 0,
+    total_purchase_orders: 0,
+    total_payments: 0,
+    total_inventory_items: 0,
+    total_revenue: 0.0,
+    total_documents_uploaded: 0
+  });
+
+  // Users management state
+  const [users, setUsers] = useState<any[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [inviteForm, setInviteForm] = useState({
+    email: "",
+    first_name: "",
+    last_name: "",
+    tenant_id: "",
+    role: "org:member"
+  });
+  const [inviteStatus, setInviteStatus] = useState<{ type: "success" | "error", message: string } | null>(null);
+
+  // Plans management state
+  const [plans, setPlans] = useState<any[]>([]);
+  const [loadingPlans, setLoadingPlans] = useState(false);
+  const [editingPlan, setEditingPlan] = useState<any | null>(null);
+  const [planForm, setPlanForm] = useState({
+    name: "",
+    price: 0.0,
+    period: "/month",
+    description: "",
+    features: "",
+    popular: false,
+    cta: "Start Free Trial",
+    trial_days: 14,
+    limits: {
+      max_users: 10,
+      max_suppliers: 50,
+      max_purchase_orders: 100,
+      max_warehouses: 2
+    }
+  });
+  const [planStatus, setPlanStatus] = useState<{ type: "success" | "error", message: string } | null>(null);
+
   // Store integration settings state
   const [settingsForm, setSettingsForm] = useState({
     clerkPublishableKey: "pk_test_Y2xlcmsuZXJwLnN1cHBsaWVyLmNvbSQ",
@@ -59,6 +110,171 @@ export default function AdminPortalPage() {
     purchaseOrders,
     invoices
   } = useERPStore();
+
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+  const fetchLiveAnalytics = async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/v1/system/analytics`);
+      if (res.ok) {
+        const data = await res.json();
+        setLiveAnalytics(data);
+      }
+    } catch (err) {
+      console.error("Error fetching admin platform analytics:", err);
+    }
+  };
+
+  const fetchUsers = async () => {
+    setLoadingUsers(true);
+    try {
+      const res = await fetch(`${API_URL}/api/v1/system/users`);
+      if (res.ok) {
+        const data = await res.json();
+        setUsers(data);
+      }
+    } catch (err) {
+      console.error("Error fetching admin users:", err);
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
+
+  const fetchPlans = async () => {
+    setLoadingPlans(true);
+    try {
+      const res = await fetch(`${API_URL}/api/v1/system/plans`);
+      if (res.ok) {
+        const data = await res.json();
+        setPlans(data);
+      }
+    } catch (err) {
+      console.error("Error fetching admin plans:", err);
+    } finally {
+      setLoadingPlans(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchLiveAnalytics();
+    fetchUsers();
+    fetchPlans();
+  }, []);
+
+  const handleInviteUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setInviteStatus(null);
+    try {
+      const res = await fetch(`${API_URL}/api/v1/system/users/invite`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(inviteForm)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setInviteStatus({ type: "success", message: `Successfully invited ${data.email}!` });
+        const newLog = `[${new Date().toISOString()}] [System] INVITED USER: "${data.email}" to tenant namespace "${inviteForm.tenant_id || 'Global'}"`;
+        setLogs(prev => [newLog, ...prev]);
+        setInviteForm({
+          email: "",
+          first_name: "",
+          last_name: "",
+          tenant_id: "",
+          role: "org:member"
+        });
+        fetchUsers();
+        fetchLiveAnalytics();
+      } else {
+        const errData = await res.json();
+        setInviteStatus({ type: "error", message: errData.detail || "Failed to invite user." });
+      }
+    } catch (err) {
+      setInviteStatus({ type: "error", message: "Failed to connect to the backend server." });
+    }
+  };
+
+  const handleSavePlan = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPlanStatus(null);
+    try {
+      const url = editingPlan 
+        ? `${API_URL}/api/v1/system/plans/${editingPlan.id}`
+        : `${API_URL}/api/v1/system/plans`;
+      const method = editingPlan ? "PUT" : "POST";
+      
+      const featuresArray = planForm.features.split("\n").map(f => f.trim()).filter(Boolean);
+      
+      const payload = {
+        name: planForm.name,
+        price: Number(planForm.price),
+        period: planForm.period,
+        description: planForm.description,
+        features: featuresArray,
+        popular: planForm.popular,
+        cta: planForm.cta,
+        trial_days: Number(planForm.trial_days),
+        limits: planForm.limits
+      };
+
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      if (res.ok) {
+        setPlanStatus({ type: "success", message: `Plan successfully ${editingPlan ? "updated" : "created"}!` });
+        const newLog = `[${new Date().toISOString()}] [System] ${editingPlan ? "UPDATED" : "CREATED"} PRICING PLAN: "${planForm.name}"`;
+        setLogs(prev => [newLog, ...prev]);
+        setEditingPlan(null);
+        setPlanForm({
+          name: "",
+          price: 0.0,
+          period: "/month",
+          description: "",
+          features: "",
+          popular: false,
+          cta: "Start Free Trial",
+          trial_days: 14,
+          limits: {
+            max_users: 10,
+            max_suppliers: 50,
+            max_purchase_orders: 100,
+            max_warehouses: 2
+          }
+        });
+        fetchPlans();
+        fetchLiveAnalytics();
+      } else {
+        const errData = await res.json();
+        setPlanStatus({ type: "error", message: errData.detail || "Failed to save plan." });
+      }
+    } catch (err) {
+      setPlanStatus({ type: "error", message: "Failed to connect to the backend server." });
+    }
+  };
+
+  const handleDeletePlan = async (planId: string) => {
+    if (!confirm("Are you sure you want to delete this subscription plan?")) return;
+    try {
+      const res = await fetch(`${API_URL}/api/v1/system/plans/${planId}`, {
+        method: "DELETE"
+      });
+      if (res.ok) {
+        alert("Subscription plan deleted successfully!");
+        const deletedPlan = plans.find(p => p.id === planId);
+        const newLog = `[${new Date().toISOString()}] [System] DELETED PRICING PLAN ID: "${planId}" (${deletedPlan?.name || 'Unknown'})`;
+        setLogs(prev => [newLog, ...prev]);
+        fetchPlans();
+        fetchLiveAnalytics();
+      } else {
+        const errData = await res.json();
+        alert(errData.detail || "Failed to delete subscription plan.");
+      }
+    } catch (err) {
+      alert("Failed to connect to the backend server.");
+    }
+  };
 
   // Populate initial logs
   useEffect(() => {
@@ -173,8 +389,44 @@ export default function AdminPortalPage() {
       {/* CORE CONTAINER */}
       <main className="max-w-7xl mx-auto p-6 space-y-6">
         
-        {/* GRID 1: SYSTEM HEALTH OVERVIEW */}
-        <section className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        {/* TAB NAVIGATION */}
+        <div className="flex border-b border-zinc-200 dark:border-zinc-800 gap-1 sm:gap-2 mb-6">
+          <button
+            onClick={() => setActiveTab("overview")}
+            className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider border-b-2 transition-all ${
+              activeTab === "overview"
+                ? "border-emerald-500 text-emerald-500"
+                : "border-transparent text-zinc-500 hover:text-zinc-950 dark:hover:text-zinc-100"
+            }`}
+          >
+            Overview
+          </button>
+          <button
+            onClick={() => setActiveTab("users")}
+            className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider border-b-2 transition-all ${
+              activeTab === "users"
+                ? "border-emerald-500 text-emerald-500"
+                : "border-transparent text-zinc-500 hover:text-zinc-950 dark:hover:text-zinc-100"
+            }`}
+          >
+            User & Team Management
+          </button>
+          <button
+            onClick={() => setActiveTab("plans")}
+            className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider border-b-2 transition-all ${
+              activeTab === "plans"
+                ? "border-emerald-500 text-emerald-500"
+                : "border-transparent text-zinc-500 hover:text-zinc-950 dark:hover:text-zinc-100"
+            }`}
+          >
+            Pricing Plans
+          </button>
+        </div>
+
+        {activeTab === "overview" && (
+          <>
+            {/* GRID 1: SYSTEM HEALTH OVERVIEW */}
+            <section className="grid grid-cols-1 md:grid-cols-4 gap-4">
           
           <div className="p-5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-850 rounded-2xl shadow-sm hover:shadow-md transition-shadow">
             <div className="flex items-center justify-between text-zinc-455 dark:text-zinc-450">
@@ -534,31 +786,529 @@ export default function AdminPortalPage() {
               Aggregated system metrics across all database namespaces. Represents the live count of relations.
             </p>
 
-            <div className="mt-4 space-y-3.5 text-xs">
+            <div className="mt-4 space-y-3 text-xs">
               <div className="flex justify-between py-1.5 border-b border-zinc-100 dark:border-zinc-850">
                 <span className="text-zinc-550 dark:text-zinc-400">Total Registered Tenants</span>
-                <span className="font-bold">{statsMetrics.tenantsCount}</span>
+                <span className="font-bold">{formatSmartNumber(liveAnalytics.total_organizations)}</span>
+              </div>
+              <div className="flex justify-between py-1.5 border-b border-zinc-100 dark:border-zinc-850">
+                <span className="text-zinc-550 dark:text-zinc-400">Total Active Users</span>
+                <span className="font-bold">{formatSmartNumber(liveAnalytics.total_active_users)}</span>
               </div>
               <div className="flex justify-between py-1.5 border-b border-zinc-100 dark:border-zinc-850">
                 <span className="text-zinc-550 dark:text-zinc-400">Total Verified Suppliers</span>
-                <span className="font-bold">{statsMetrics.suppliersCount}</span>
+                <span className="font-bold">{formatSmartNumber(liveAnalytics.total_suppliers)}</span>
               </div>
               <div className="flex justify-between py-1.5 border-b border-zinc-100 dark:border-zinc-850">
-                <span className="text-zinc-550 dark:text-zinc-400">Global Product Catalog SKUs</span>
-                <span className="font-bold">{statsMetrics.productsCount}</span>
+                <span className="text-zinc-550 dark:text-zinc-400">Global Purchase Orders</span>
+                <span className="font-bold">{formatSmartNumber(liveAnalytics.total_purchase_orders)}</span>
               </div>
               <div className="flex justify-between py-1.5 border-b border-zinc-100 dark:border-zinc-850">
-                <span className="text-zinc-550 dark:text-zinc-400">Active Purchase Orders</span>
-                <span className="font-bold">{statsMetrics.ordersCount}</span>
+                <span className="text-zinc-550 dark:text-zinc-400">Total Payments Logged</span>
+                <span className="font-bold">{formatSmartNumber(liveAnalytics.total_payments)}</span>
               </div>
-              <div className="flex justify-between py-1.5 text-emerald-555 dark:text-emerald-400 font-bold">
-                <span>Outstanding Finance Invoices</span>
-                <span>{statsMetrics.invoicesCount}</span>
+              <div className="flex justify-between py-1.5 border-b border-zinc-100 dark:border-zinc-850">
+                <span className="text-zinc-550 dark:text-zinc-400">Global Inventory Stock</span>
+                <span className="font-bold">{formatSmartNumber(liveAnalytics.total_inventory_items)}</span>
+              </div>
+              <div className="flex justify-between py-1.5 border-b border-zinc-100 dark:border-zinc-850">
+                <span className="text-zinc-550 dark:text-zinc-400">Total Documents Stored</span>
+                <span className="font-bold">{formatSmartNumber(liveAnalytics.total_documents_uploaded)}</span>
+              </div>
+              <div className="flex justify-between py-1.5 text-emerald-555 dark:text-emerald-450 font-bold">
+                <span>Total Platform Revenue</span>
+                <span>₹{formatSmartNumber(liveAnalytics.total_revenue)}</span>
               </div>
             </div>
           </div>
 
         </section>
+          </>
+        )}
+
+        {/* ========================================================= */}
+        {/* USERS & TEAM MANAGEMENT TAB                               */}
+        {/* ========================================================= */}
+        {activeTab === "users" && (
+          <div className="space-y-6 animate-fadeIn">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              
+              {/* Invite User Form */}
+              <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-850 rounded-2xl shadow-sm p-6 space-y-4">
+                <div className="border-b border-zinc-200 dark:border-zinc-800 pb-3">
+                  <h2 className="text-base font-bold tracking-tight">Invite Corporate Member</h2>
+                  <p className="text-xs text-zinc-450 mt-1">
+                    Send a Clerk invitation and register user record inside the database namespace.
+                  </p>
+                </div>
+
+                {inviteStatus && (
+                  <div className={`p-3 rounded-lg text-xs flex items-center gap-2 ${
+                    inviteStatus.type === "success" 
+                      ? "bg-emerald-100/80 text-emerald-800 dark:bg-emerald-950/20 dark:text-emerald-400" 
+                      : "bg-red-100/80 text-red-800 dark:bg-red-950/20 dark:text-red-400"
+                  }`}>
+                    {inviteStatus.type === "success" ? <CheckCircle className="h-4.5 w-4.5" /> : <AlertCircle className="h-4.5 w-4.5" />}
+                    <span>{inviteStatus.message}</span>
+                  </div>
+                )}
+
+                <form onSubmit={handleInviteUser} className="space-y-3.5">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Email Address</label>
+                    <input 
+                      type="email" 
+                      required
+                      placeholder="e.g. user@company.com"
+                      value={inviteForm.email}
+                      onChange={(e) => setInviteForm({ ...inviteForm, email: e.target.value })}
+                      className="w-full text-xs border rounded-lg p-2.5 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">First Name</label>
+                      <input 
+                        type="text" 
+                        required
+                        placeholder="Rohan"
+                        value={inviteForm.first_name}
+                        onChange={(e) => setInviteForm({ ...inviteForm, first_name: e.target.value })}
+                        className="w-full text-xs border rounded-lg p-2.5 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Last Name</label>
+                      <input 
+                        type="text" 
+                        required
+                        placeholder="Verma"
+                        value={inviteForm.last_name}
+                        onChange={(e) => setInviteForm({ ...inviteForm, last_name: e.target.value })}
+                        className="w-full text-xs border rounded-lg p-2.5 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Organization Tenant</label>
+                    <select
+                      required
+                      value={inviteForm.tenant_id}
+                      onChange={(e) => setInviteForm({ ...inviteForm, tenant_id: e.target.value })}
+                      className="w-full text-xs border rounded-lg p-2.5 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700"
+                    >
+                      <option value="">Select Tenant Organization</option>
+                      {Object.keys(tenantAccess).map(tName => {
+                        const tId = tName.toLowerCase().replace(/[^a-z0-9]/g, "-");
+                        return <option key={tName} value={tId}>{tName} ({tId})</option>;
+                      })}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Role Definition</label>
+                    <select
+                      value={inviteForm.role}
+                      onChange={(e) => setInviteForm({ ...inviteForm, role: e.target.value })}
+                      className="w-full text-xs border rounded-lg p-2.5 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700"
+                    >
+                      <option value="org:member">Organization Member</option>
+                      <option value="org:admin">Organization Administrator</option>
+                      <option value="org:procurement_manager">Procurement Manager</option>
+                      <option value="org:warehouse_manager">Warehouse Manager</option>
+                      <option value="org:accountant">Accountant</option>
+                      <option value="org:hr_manager">HR Manager</option>
+                      <option value="platform_admin">Platform Admin</option>
+                    </select>
+                  </div>
+
+                  <button 
+                    type="submit"
+                    className="w-full bg-zinc-900 text-white dark:bg-white dark:text-black py-2.5 rounded-xl text-xs font-bold hover:opacity-90 transition-opacity"
+                  >
+                    Send Clerk Invitation
+                  </button>
+                </form>
+              </div>
+
+              {/* Users List */}
+              <div className="lg:col-span-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-850 rounded-2xl shadow-sm p-6 space-y-4">
+                <div className="flex justify-between items-center border-b border-zinc-200 dark:border-zinc-800 pb-3">
+                  <div>
+                    <h2 className="text-base font-bold tracking-tight">Active Platform Users</h2>
+                    <p className="text-xs text-zinc-450 mt-1">
+                      A list of registered members and users active across all corporate tenants.
+                    </p>
+                  </div>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-zinc-100 text-zinc-855 dark:bg-zinc-800 dark:text-zinc-300">
+                    {users.length} Users Total
+                  </span>
+                </div>
+
+                {loadingUsers ? (
+                  <div className="py-12 text-center text-xs text-zinc-400">Loading active users from DB...</div>
+                ) : users.length === 0 ? (
+                  <div className="py-12 text-center text-xs text-zinc-400">No active users found in the database.</div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="border-b border-zinc-250 dark:border-zinc-800 text-zinc-400 font-bold uppercase tracking-wider text-[10px]">
+                          <th className="py-3 px-2">Name</th>
+                          <th className="py-3 px-2">Email</th>
+                          <th className="py-3 px-2">Tenant Namespace</th>
+                          <th className="py-3 px-2">Role</th>
+                          <th className="py-3 px-2">Joined Date</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {users.map(u => (
+                          <tr key={u.id} className="border-b border-zinc-100 dark:border-zinc-850 hover:bg-zinc-50/50 dark:hover:bg-zinc-800/10">
+                            <td className="py-3 px-2 font-semibold">{u.first_name} {u.last_name}</td>
+                            <td className="py-3 px-2 text-zinc-500 dark:text-zinc-400">{u.email}</td>
+                            <td className="py-3 px-2 font-mono text-[10px] text-zinc-500 dark:text-zinc-400">{u.tenant_id || "Global (Admin)"}</td>
+                            <td className="py-3 px-2">
+                              <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                                u.role === "platform_admin" 
+                                  ? "bg-purple-100 text-purple-800 dark:bg-purple-950/20 dark:text-purple-400"
+                                  : u.role === "org:admin"
+                                  ? "bg-blue-100 text-blue-800 dark:bg-blue-950/20 dark:text-blue-450"
+                                  : "bg-zinc-100 text-zinc-800 dark:bg-zinc-850/40 dark:text-zinc-350"
+                              }`}>
+                                {u.role}
+                              </span>
+                            </td>
+                            <td className="py-3 px-2 text-zinc-400">{new Date(u.created_at || u.joined_at || Date.now()).toLocaleDateString()}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================= */}
+        {/* PRICING PLANS TAB                                         */}
+        {/* ========================================================= */}
+        {activeTab === "plans" && (
+          <div className="space-y-6 animate-fadeIn">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              
+              {/* Create/Edit Plan Form */}
+              <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-850 rounded-2xl shadow-sm p-6 space-y-4">
+                <div className="border-b border-zinc-200 dark:border-zinc-800 pb-3 flex justify-between items-center">
+                  <div>
+                    <h2 className="text-base font-bold tracking-tight">{editingPlan ? "Modify Pricing Plan" : "Create Pricing Plan"}</h2>
+                    <p className="text-xs text-zinc-450 mt-1">
+                      Configure details, feature checklists, and system limit settings.
+                    </p>
+                  </div>
+                  {editingPlan && (
+                    <button
+                      onClick={() => {
+                        setEditingPlan(null);
+                        setPlanForm({
+                          name: "",
+                          price: 0.0,
+                          period: "/month",
+                          description: "",
+                          features: "",
+                          popular: false,
+                          cta: "Start Free Trial",
+                          trial_days: 14,
+                          limits: {
+                            max_users: 10,
+                            max_suppliers: 50,
+                            max_purchase_orders: 100,
+                            max_warehouses: 2
+                          }
+                        });
+                      }}
+                      className="text-xs text-zinc-400 hover:text-zinc-650"
+                    >
+                      Reset
+                    </button>
+                  )}
+                </div>
+
+                {planStatus && (
+                  <div className={`p-3 rounded-lg text-xs flex items-center gap-2 ${
+                    planStatus.type === "success" 
+                      ? "bg-emerald-100/80 text-emerald-800 dark:bg-emerald-950/20 dark:text-emerald-400" 
+                      : "bg-red-100/80 text-red-800 dark:bg-red-950/20 dark:text-red-400"
+                  }`}>
+                    {planStatus.type === "success" ? <CheckCircle className="h-4.5 w-4.5" /> : <AlertCircle className="h-4.5 w-4.5" />}
+                    <span>{planStatus.message}</span>
+                  </div>
+                )}
+
+                <form onSubmit={handleSavePlan} className="space-y-3.5">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Plan Name</label>
+                    <input 
+                      type="text" 
+                      required
+                      placeholder="e.g. Growth Enterprise"
+                      value={planForm.name}
+                      onChange={(e) => setPlanForm({ ...planForm, name: e.target.value })}
+                      className="w-full text-xs border rounded-lg p-2.5 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700 font-semibold"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Price (INR)</label>
+                      <input 
+                        type="number" 
+                        required
+                        min="0"
+                        step="0.01"
+                        placeholder="e.g. 4999.00"
+                        value={planForm.price}
+                        onChange={(e) => setPlanForm({ ...planForm, price: parseFloat(e.target.value) || 0 })}
+                        className="w-full text-xs border rounded-lg p-2.5 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Period</label>
+                      <input 
+                        type="text" 
+                        required
+                        placeholder="/month or /year"
+                        value={planForm.period}
+                        onChange={(e) => setPlanForm({ ...planForm, period: e.target.value })}
+                        className="w-full text-xs border rounded-lg p-2.5 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Description</label>
+                    <textarea 
+                      placeholder="Brief description of whom this plan is tailored for."
+                      value={planForm.description}
+                      onChange={(e) => setPlanForm({ ...planForm, description: e.target.value })}
+                      className="w-full text-xs border rounded-lg p-2.5 h-16 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700 resize-none"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Features Checklist (One per line)</label>
+                    <textarea 
+                      placeholder="e.g. Multi-warehouse support&#10;Manager approval chains&#10;API access"
+                      value={planForm.features}
+                      onChange={(e) => setPlanForm({ ...planForm, features: e.target.value })}
+                      className="w-full text-xs border rounded-lg p-2.5 h-20 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700 resize-none font-sans"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">CTA Button Label</label>
+                      <input 
+                        type="text" 
+                        required
+                        value={planForm.cta}
+                        onChange={(e) => setPlanForm({ ...planForm, cta: e.target.value })}
+                        className="w-full text-xs border rounded-lg p-2.5 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Trial Period (Days)</label>
+                      <input 
+                        type="number" 
+                        required
+                        min="0"
+                        value={planForm.trial_days}
+                        onChange={(e) => setPlanForm({ ...planForm, trial_days: parseInt(e.target.value) || 0 })}
+                        className="w-full text-xs border rounded-lg p-2.5 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="p-3 bg-zinc-55/50 dark:bg-zinc-850/20 border border-zinc-200 dark:border-zinc-800 rounded-xl space-y-3.5">
+                    <h4 className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Resource System Limits</h4>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <label className="text-[9px] font-bold text-zinc-450 block uppercase">Max Active Users</label>
+                        <input 
+                          type="number" 
+                          required
+                          value={planForm.limits.max_users}
+                          onChange={(e) => setPlanForm({ ...planForm, limits: { ...planForm.limits, max_users: parseInt(e.target.value) || 1 } })}
+                          className="w-full text-xs border rounded-lg p-1.5 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[9px] font-bold text-zinc-450 block uppercase">Max Suppliers</label>
+                        <input 
+                          type="number" 
+                          required
+                          value={planForm.limits.max_suppliers}
+                          onChange={(e) => setPlanForm({ ...planForm, limits: { ...planForm.limits, max_suppliers: parseInt(e.target.value) || 1 } })}
+                          className="w-full text-xs border rounded-lg p-1.5 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[9px] font-bold text-zinc-450 block uppercase">Max Monthly POs</label>
+                        <input 
+                          type="number" 
+                          required
+                          value={planForm.limits.max_purchase_orders}
+                          onChange={(e) => setPlanForm({ ...planForm, limits: { ...planForm.limits, max_purchase_orders: parseInt(e.target.value) || 1 } })}
+                          className="w-full text-xs border rounded-lg p-1.5 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[9px] font-bold text-zinc-450 block uppercase">Max Warehouses</label>
+                        <input 
+                          type="number" 
+                          required
+                          value={planForm.limits.max_warehouses}
+                          onChange={(e) => setPlanForm({ ...planForm, limits: { ...planForm.limits, max_warehouses: parseInt(e.target.value) || 1 } })}
+                          className="w-full text-xs border rounded-lg p-1.5 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-1">
+                    <input 
+                      type="checkbox"
+                      id="popular"
+                      checked={planForm.popular}
+                      onChange={(e) => setPlanForm({ ...planForm, popular: e.target.checked })}
+                      className="rounded border-zinc-300 text-emerald-600 focus:ring-emerald-500"
+                    />
+                    <label htmlFor="popular" className="text-xs font-semibold text-zinc-600 dark:text-zinc-350 select-none">Mark as Popular Plan</label>
+                  </div>
+
+                  <button 
+                    type="submit"
+                    className="w-full bg-emerald-600 text-white py-2.5 rounded-xl text-xs font-bold hover:bg-emerald-700 transition-colors"
+                  >
+                    {editingPlan ? "Update Pricing Plan" : "Create Pricing Plan"}
+                  </button>
+                </form>
+              </div>
+
+              {/* Plans List Grid */}
+              <div className="lg:col-span-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-850 rounded-2xl shadow-sm p-6 space-y-4">
+                <div className="flex justify-between items-center border-b border-zinc-200 dark:border-zinc-800 pb-3">
+                  <div>
+                    <h2 className="text-base font-bold tracking-tight">Active Platform Subscription Tiers</h2>
+                    <p className="text-xs text-zinc-450 mt-1">
+                      Manage all pricing plan configurations that organizations can purchase and subscribe to.
+                    </p>
+                  </div>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-zinc-100 text-zinc-855 dark:bg-zinc-800 dark:text-zinc-300">
+                    {plans.length} Tiers Available
+                  </span>
+                </div>
+
+                {loadingPlans ? (
+                  <div className="py-12 text-center text-xs text-zinc-400 font-mono">Loading tiers from DB...</div>
+                ) : plans.length === 0 ? (
+                  <div className="py-12 text-center text-xs text-zinc-450">No pricing plans found. Create one using the form!</div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {plans.map(p => (
+                      <div 
+                        key={p.id} 
+                        className={`border rounded-2xl p-5 flex flex-col justify-between transition-all relative ${
+                          p.popular 
+                            ? "bg-zinc-55/20 border-emerald-500/80 shadow-md dark:bg-zinc-850/10" 
+                            : "border-zinc-200 dark:border-zinc-850 bg-zinc-50/10"
+                        }`}
+                      >
+                        {p.popular && (
+                          <span className="absolute -top-2.5 right-4 px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-555 text-white dark:bg-emerald-600 tracking-wider uppercase">
+                            POPULAR CHOICE
+                          </span>
+                        )}
+                        <div className="space-y-3.5">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">{p.name}</h3>
+                              <p className="text-[11px] text-zinc-500 mt-1 leading-normal">{p.description}</p>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <span className="text-base font-black text-zinc-900 dark:text-zinc-100">₹{p.price.toLocaleString()}</span>
+                              <span className="text-[10px] text-zinc-450 block font-bold">{p.period}</span>
+                            </div>
+                          </div>
+
+                          <div className="border-t border-zinc-150 dark:border-zinc-850 pt-2.5 space-y-2">
+                            <h4 className="text-[9px] font-bold uppercase tracking-wider text-zinc-400 font-mono">Included Features</h4>
+                            <ul className="space-y-1.5">
+                              {p.features && p.features.map((feat: string, idx: number) => (
+                                <li key={idx} className="text-[11px] text-zinc-650 dark:text-zinc-400 flex items-center gap-1.5">
+                                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0"></span>
+                                  <span>{feat}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+
+                          <div className="border-t border-zinc-150 dark:border-zinc-850 pt-2.5 space-y-1.5">
+                            <h4 className="text-[9px] font-bold uppercase tracking-wider text-zinc-400 font-mono">Resource Limits</h4>
+                            <div className="grid grid-cols-2 gap-2 text-[10px] text-zinc-500 dark:text-zinc-400 font-mono">
+                              <div>Users: {p.limits?.max_users} max</div>
+                              <div>Suppliers: {p.limits?.max_suppliers} max</div>
+                              <div>Monthly POs: {p.limits?.max_purchase_orders} max</div>
+                              <div>Warehouses: {p.limits?.max_warehouses} max</div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex gap-2.5 mt-5 pt-3.5 border-t border-zinc-100 dark:border-zinc-850">
+                          <button
+                            onClick={() => {
+                              setEditingPlan(p);
+                              setPlanForm({
+                                name: p.name,
+                                price: p.price,
+                                period: p.period,
+                                description: p.description || "",
+                                features: p.features ? p.features.join("\n") : "",
+                                popular: p.popular || false,
+                                cta: p.cta || "Start Free Trial",
+                                trial_days: p.trial_days || 14,
+                                limits: p.limits || {
+                                  max_users: 10,
+                                  max_suppliers: 50,
+                                  max_purchase_orders: 100,
+                                  max_warehouses: 2
+                                }
+                              });
+                            }}
+                            className="flex-1 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 py-2 rounded-lg text-xs font-bold text-center flex items-center justify-center gap-1 transition-colors"
+                          >
+                            <Edit className="h-3.5 w-3.5" /> Edit
+                          </button>
+                          <button
+                            onClick={() => handleDeletePlan(p.id)}
+                            className="bg-red-55 hover:bg-red-100 dark:bg-red-950/20 dark:hover:bg-red-950/40 text-red-600 p-2 rounded-lg transition-colors"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+            </div>
+          </div>
+        )}
 
       </main>
 

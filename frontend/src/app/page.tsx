@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
+import { formatSmartNumber } from "@/lib/utils";
 import {
   Users,
   Package,
@@ -57,6 +58,32 @@ export default function LandingPage() {
     uptime: 0,
     transactions: 0
   });
+
+  const [liveStats, setLiveStats] = useState({
+    total_organizations: 0,
+    total_active_users: 0,
+    total_suppliers: 0,
+    total_purchase_orders: 0,
+    total_payments: 0,
+    total_inventory_items: 0,
+    total_revenue: 0.0,
+    total_documents_uploaded: 0
+  });
+
+  useEffect(() => {
+    const fetchLiveStats = async () => {
+      try {
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/system/analytics`);
+        if (res.ok) {
+          const data = await res.json();
+          setLiveStats(data);
+        }
+      } catch (err) {
+        console.error("Failed to fetch live platform analytics:", err);
+      }
+    };
+    fetchLiveStats();
+  }, []);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -526,20 +553,36 @@ export default function LandingPage() {
           {/* Stats Counters Grid */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mt-12 pt-8 border-t border-slate-250/50">
             <div className="text-center">
-              <span className="text-2xl sm:text-3xl font-black text-slate-900">{stats.customers.toLocaleString()}+</span>
-              <span className="text-xs text-slate-450 block font-medium uppercase mt-1.5">Trusted Partners</span>
-            </div>
-            <div className="text-center">
-              <span className="text-2xl sm:text-3xl font-black text-slate-900">{stats.orgs.toLocaleString()}+</span>
+              <span className="text-2xl sm:text-3xl font-black text-slate-900">{formatSmartNumber(liveStats.total_organizations)}</span>
               <span className="text-xs text-slate-450 block font-medium uppercase mt-1.5">Active Organizations</span>
             </div>
             <div className="text-center">
-              <span className="text-2xl sm:text-3xl font-black text-slate-900">{stats.uptime}%</span>
-              <span className="text-xs text-slate-450 block font-medium uppercase mt-1.5">Uptime SLA</span>
+              <span className="text-2xl sm:text-3xl font-black text-slate-900">{formatSmartNumber(liveStats.total_active_users)}</span>
+              <span className="text-xs text-slate-450 block font-medium uppercase mt-1.5">Active Users</span>
             </div>
             <div className="text-center">
-              <span className="text-2xl sm:text-3xl font-black text-slate-900">₹{stats.transactions}Cr+</span>
-              <span className="text-xs text-slate-450 block font-medium uppercase mt-1.5">Transactions Processed</span>
+              <span className="text-2xl sm:text-3xl font-black text-slate-900">{formatSmartNumber(liveStats.total_suppliers)}</span>
+              <span className="text-xs text-slate-450 block font-medium uppercase mt-1.5">Verified Suppliers</span>
+            </div>
+            <div className="text-center">
+              <span className="text-2xl sm:text-3xl font-black text-slate-900">{formatSmartNumber(liveStats.total_purchase_orders)}</span>
+              <span className="text-xs text-slate-450 block font-medium uppercase mt-1.5">Purchase Orders</span>
+            </div>
+            <div className="text-center mt-4 md:mt-0">
+              <span className="text-2xl sm:text-3xl font-black text-slate-900">{formatSmartNumber(liveStats.total_payments)}</span>
+              <span className="text-xs text-slate-450 block font-medium uppercase mt-1.5">Payments Logged</span>
+            </div>
+            <div className="text-center mt-4 md:mt-0">
+              <span className="text-2xl sm:text-3xl font-black text-slate-900">{formatSmartNumber(liveStats.total_inventory_items)}</span>
+              <span className="text-xs text-slate-450 block font-medium uppercase mt-1.5">Inventory Stocked</span>
+            </div>
+            <div className="text-center mt-4 md:mt-0">
+              <span className="text-2xl sm:text-3xl font-black text-slate-900">₹{formatSmartNumber(liveStats.total_revenue)}</span>
+              <span className="text-xs text-slate-450 block font-medium uppercase mt-1.5">Total Revenue</span>
+            </div>
+            <div className="text-center mt-4 md:mt-0">
+              <span className="text-2xl sm:text-3xl font-black text-slate-900">{formatSmartNumber(liveStats.total_documents_uploaded)}</span>
+              <span className="text-xs text-slate-450 block font-medium uppercase mt-1.5">Documents Stored</span>
             </div>
           </div>
 

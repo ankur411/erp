@@ -56,3 +56,19 @@ class Document(Base, HasTenant):
     file_size: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     reference_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True) # e.g. PURCHASE_ORDER
     reference_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+
+class Plan(Base):
+    __tablename__ = "plans"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    price: Mapped[str] = mapped_column(String(50), nullable=False) # e.g. "₹4,999" or "Custom"
+    period: Mapped[Optional[str]] = mapped_column(String(50), default="/month", nullable=True) # e.g. "/month" or ""
+    description: Mapped[str] = mapped_column(String(512), nullable=False)
+    features: Mapped[dict] = mapped_column(JSON, nullable=False) # JSON array of strings
+    popular: Mapped[bool] = mapped_column(default=False, nullable=False)
+    cta: Mapped[str] = mapped_column(String(100), default="Start 14-Day Free Trial", nullable=False)
+    trial_days: Mapped[int] = mapped_column(default=14, nullable=False)
+    limits: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True) # e.g. {"warehouses": 2, "suppliers": 50}
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+

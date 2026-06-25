@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import Optional, List
 from datetime import datetime
 
@@ -16,8 +16,7 @@ class CategoryResponse(CategoryBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # Product Schemas
 class ProductBase(BaseModel):
@@ -50,8 +49,7 @@ class ProductResponse(ProductBase):
     updated_at: datetime
     category: Optional[CategoryResponse] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # Warehouse Schemas
 class WarehouseBase(BaseModel):
@@ -68,8 +66,7 @@ class WarehouseResponse(WarehouseBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # Inventory Schemas
 class InventoryResponse(BaseModel):
@@ -83,15 +80,21 @@ class InventoryResponse(BaseModel):
     product: ProductResponse
     warehouse: WarehouseResponse
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # Inventory Stock Adjustments
 class StockAdjustmentRequest(BaseModel):
     product_id: str
     warehouse_id: str
-    quantity: int = Field(..., ne=0, description="Positive to add stock, negative to subtract stock")
+    quantity: int = Field(..., description="Positive to add stock, negative to subtract stock")
     reason: str = Field(..., min_length=3, max_length=255)
+
+    @field_validator("quantity")
+    @classmethod
+    def validate_quantity(cls, v: int) -> int:
+        if v == 0:
+            raise ValueError("Quantity cannot be zero.")
+        return v
 
 # Inventory Ledger Schemas
 class InventoryLedgerResponse(BaseModel):
@@ -105,5 +108,4 @@ class InventoryLedgerResponse(BaseModel):
     reference_id: Optional[str] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

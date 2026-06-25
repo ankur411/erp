@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional
 from datetime import datetime, date
 from app.modules.purchase.schemas import PurchaseOrderResponse
@@ -18,8 +18,7 @@ class PaymentResponse(PaymentBase):
     status: str
     paid_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # Invoice Schemas
 class InvoiceBase(BaseModel):
@@ -43,5 +42,4 @@ class InvoiceResponse(InvoiceBase):
     purchase_order: PurchaseOrderResponse
     payments: List[PaymentResponse] = []
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
