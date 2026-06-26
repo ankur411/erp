@@ -8,6 +8,8 @@ from app.modules.inventory.router import router as inventory_router
 from app.modules.purchase.router import router as purchase_router
 from app.modules.finance.router import router as finance_router
 from app.modules.system.router import router as system_router
+from app.modules.imports.router import router as imports_router
+
 
 # Initialize Sentry if DSN is set
 if settings.SENTRY_DSN:
@@ -41,6 +43,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from app.core.tenant_middleware import TenantResolutionMiddleware
+app.add_middleware(TenantResolutionMiddleware)
+
 # Custom Global Exception Handler for logging to Sentry
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
@@ -63,3 +68,5 @@ app.include_router(suppliers_router, prefix=settings.API_V1_STR)
 app.include_router(inventory_router, prefix=settings.API_V1_STR)
 app.include_router(purchase_router, prefix=settings.API_V1_STR)
 app.include_router(finance_router, prefix=settings.API_V1_STR)
+app.include_router(imports_router, prefix=settings.API_V1_STR)
+

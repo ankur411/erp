@@ -7,10 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException, Header, Request, Query, s
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import re
 from sqlalchemy import func
 from app.database import get_db, tenant_context
 from app.core.auth import require_auth, require_org, RequireRole, UserSession
-from app.models.system import Tenant, User, Document, AuditLog, Plan
+from app.models.system import Organization, User, Document, AuditLog, Plan
 from app.models.supplier import Supplier
 from app.models.purchase import PurchaseOrder
 from app.models.finance import Payment
@@ -19,8 +20,25 @@ from app.config import settings
 from app.core.storage import generate_presigned_upload_url, generate_presigned_download_url
 from app.modules.system.schemas import (
     DocumentCreate, PresignedUploadRequest, PresignedUploadResponse, DocumentResponse,
-    TenantAccessUpdate, TenantResponse, PlatformAnalyticsResponse, PlanCreate, PlanUpdate, PlanResponse, UserInviteRequest, UserResponse
+    OrganizationAccessUpdate, OrganizationResponse, PlatformAnalyticsResponse, PlanCreate, PlanUpdate, PlanResponse, UserInviteRequest, UserResponse
 )
+
+def slugify(text: str) -> str:
+    text = text.lower()
+    text = re.sub(r'[^a-z0-9]+', '-', text)
+    return text.strip('-')
+
+async def get_unique_slug(db: AsyncSession, name: str) -> str:
+    base_slug = slugify(name) or "org"
+    slug = base_slug
+    counter = 1
+    while True:
+        stmt = select(Organization).where(Organization.slug == slug)
+        res = await db.execute(stmt)
+        if not res.scalars().first():
+            return slug
+        slug = f"{base_slug}-{counter}"
+        counter += 1
 
 router = APIRouter(prefix="/system", tags=["System & Webhooks"])
 
@@ -28,7 +46,7 @@ router = APIRouter(prefix="/system", tags=["System & Webhooks"])
 require_viewer = Depends(RequireRole(["Viewer", "Employee"]))
 require_uploader = Depends(RequireRole(["Employee", "Warehouse Manager", "Procurement Manager", "Organization Owner", "Super Admin"]))
 
-# --- USER PROFILE & TENANT SYNC ---
+# --- USER PROFILE & ORGANIZATION SYNC ---
 @router.post("/sync-profile", status_code=status.HTTP_200_OK)
 async def sync_profile(
     db: AsyncSession = Depends(get_db),
@@ -36,24 +54,26 @@ async def sync_profile(
 ):
     """
     Client-side fallback profile sync. Invoked after login to ensure user 
-    and tenant records exist in local DB.
+    and organization records exist in local DB.
     """
-    tenant_stmt = select(Tenant).where(Tenant.clerk_org_id == current_user.tenant_id)
-    res = await db.execute(tenant_stmt)
-    tenant = res.scalars().first()
+    org_stmt = select(Organization).where(Organization.clerk_org_id == current_user.tenant_id)
+    res = await db.execute(org_stmt)
+    org = res.scalars().first()
 
-    if not tenant:
-        tenant = Tenant(
+    if not org:
+        slug = await get_unique_slug(db, "Org Tenant")
+        org = Organization(
             name="Org Tenant", 
+            slug=slug,
             clerk_org_id=current_user.tenant_id,
             status="active"
         )
-        db.add(tenant)
+        db.add(org)
         await db.commit()
-        await db.refresh(tenant)
+        await db.refresh(org)
 
     # Set tenant context
-    tenant_context.set(tenant.id)
+    tenant_context.set(org.id)
 
     user_stmt = select(User).where(User.clerk_user_id == current_user.user_id)
     user_res = await db.execute(user_stmt)
@@ -63,7 +83,7 @@ async def sync_profile(
 
     if not user:
         user = User(
-            tenant_id=tenant.id,
+            tenant_id=org.id,
             clerk_user_id=current_user.user_id,
             email=current_user.email,
             role=role
@@ -76,7 +96,7 @@ async def sync_profile(
         user.role = role
         await db.commit()
 
-    return {"status": "success", "user_id": user.id, "tenant_id": tenant.id}
+    return {"status": "success", "user_id": user.id, "tenant_id": org.id}
 
 
 # --- CLERK WEBHOOK ---
@@ -101,19 +121,23 @@ async def clerk_webhook(
         clerk_org_id = data.get("id")
         name = data.get("name")
         
-        stmt = select(Tenant).where(Tenant.clerk_org_id == clerk_org_id)
+        stmt = select(Organization).where(Organization.clerk_org_id == clerk_org_id)
         res = await db.execute(stmt)
-        tenant = res.scalars().first()
+        org = res.scalars().first()
         
-        if not tenant:
-            tenant = Tenant(
+        if not org:
+            slug = await get_unique_slug(db, name)
+            org = Organization(
                 clerk_org_id=clerk_org_id,
                 name=name,
+                slug=slug,
                 status="active"
             )
-            db.add(tenant)
+            db.add(org)
         else:
-            tenant.name = name
+            org.name = name
+            if not org.slug:
+                org.slug = await get_unique_slug(db, name)
         await db.commit()
 
     elif event_type == "user.created" or event_type == "user.updated":
@@ -239,40 +263,92 @@ async def get_presigned_download(
             detail=f"Failed to generate download URL: {str(e)}"
         )
 
-# --- TENANT ADMINISTRATION (Platform Control Panel) ---
+# --- ORGANIZATION ADMINISTRATION (Platform Control Panel) ---
 
-@router.get("/tenants", response_model=List[TenantResponse])
-async def list_tenants(
+@router.get("/organizations/resolve", response_model=OrganizationResponse)
+async def resolve_organization(
+    host: str = Query(..., description="The hostname to resolve"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Resolve organization details from a given host/domain name.
+    """
+    hostname = host.split(":")[0].lower()
+    root_domain = settings.ROOT_DOMAIN.lower()
+    if hostname in ("localhost", "127.0.0.1", root_domain, f"www.{root_domain}"):
+        raise HTTPException(status_code=404, detail="Root domain cannot be resolved to a specific tenant.")
+        
+    if hostname.endswith(f".{root_domain}"):
+        slug = hostname[:-len(f".{root_domain}") - 1]
+        if slug and slug != "www":
+            stmt = select(Organization).where(Organization.slug == slug)
+            res = await db.execute(stmt)
+            org = res.scalars().first()
+            if org:
+                return org
+                
+    stmt = select(Organization).where(Organization.custom_domain == hostname)
+    res = await db.execute(stmt)
+    org = res.scalars().first()
+    if org:
+        return org
+        
+    raise HTTPException(status_code=404, detail="Organization not found for the given host.")
+
+@router.get("/organizations", response_model=List[OrganizationResponse])
+async def list_organizations(
     db: AsyncSession = Depends(get_db),
     current_user: UserSession = Depends(require_auth)
 ):
     """
-    List all tenants for platform administration.
+    List all organizations for platform administration.
     """
-    stmt = select(Tenant)
-    res = await db.execute(stmt.order_by(Tenant.created_at.desc()))
+    stmt = select(Organization)
+    res = await db.execute(stmt.order_by(Organization.created_at.desc()))
     return res.scalars().all()
 
-@router.put("/tenants/{tenant_id}/access", response_model=TenantResponse)
-async def update_tenant_access(
-    tenant_id: str,
-    access_update: TenantAccessUpdate,
+@router.get("/tenants", response_model=List[OrganizationResponse])
+async def list_tenants_alias(
     db: AsyncSession = Depends(get_db),
     current_user: UserSession = Depends(require_auth)
 ):
     """
-    Update access configurations for a specific tenant.
+    Alias for backwards compatibility with the admin portal.
     """
-    stmt = select(Tenant).where(Tenant.id == tenant_id)
+    return await list_organizations(db, current_user)
+
+@router.put("/organizations/{org_id}/access", response_model=OrganizationResponse)
+async def update_organization_access(
+    org_id: str,
+    access_update: OrganizationAccessUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSession = Depends(require_auth)
+):
+    """
+    Update access configurations for a specific organization.
+    """
+    stmt = select(Organization).where(Organization.id == org_id)
     res = await db.execute(stmt)
-    tenant = res.scalars().first()
-    if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
+    org = res.scalars().first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
         
-    tenant.access_config = access_update.dict()
+    org.access_config = access_update.model_dump()
     await db.commit()
-    await db.refresh(tenant)
-    return tenant
+    await db.refresh(org)
+    return org
+
+@router.put("/tenants/{tenant_id}/access", response_model=OrganizationResponse)
+async def update_tenant_access_alias(
+    tenant_id: str,
+    access_update: OrganizationAccessUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSession = Depends(require_auth)
+):
+    """
+    Alias for backwards compatibility with the admin portal.
+    """
+    return await update_organization_access(tenant_id, access_update, db, current_user)
 
 # --- PLATFORM ANALYTICS ---
 
@@ -284,7 +360,7 @@ async def get_platform_analytics(
     Get platform-wide aggregated analytics across all tenants.
     """
     # Use skip_tenant_filter execution option to fetch counts across all tenants
-    orgs_stmt = select(func.count(Tenant.id)).execution_options(skip_tenant_filter=True)
+    orgs_stmt = select(func.count(Organization.id)).execution_options(skip_tenant_filter=True)
     orgs_res = await db.execute(orgs_stmt)
     total_organizations = orgs_res.scalar() or 0
 
@@ -440,12 +516,12 @@ async def invite_user(
     if user_exists_res.scalars().first():
          raise HTTPException(status_code=400, detail="User with this email already exists")
 
-    # 2. Get the Tenant to fetch Clerk Org ID
-    tenant_stmt = select(Tenant).where(Tenant.id == invite_in.tenant_id)
-    tenant_res = await db.execute(tenant_stmt)
-    tenant = tenant_res.scalars().first()
-    if not tenant:
-        raise HTTPException(status_code=404, detail="Selected organization/tenant not found")
+    # 2. Get the Organization to fetch Clerk Org ID
+    org_stmt = select(Organization).where(Organization.id == invite_in.tenant_id)
+    org_res = await db.execute(org_stmt)
+    org = org_res.scalars().first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Selected organization not found")
 
     # 3. Generate a temporary password
     temp_password = f"TempPass_{uuid.uuid4().hex[:8]}!"
@@ -484,7 +560,7 @@ async def invite_user(
         # Map specific system roles to Clerk custom roles if applicable, otherwise use org:member
         clerk_role = "org:member"
 
-    if tenant.clerk_org_id and settings.CLERK_SECRET_KEY and not settings.CLERK_SECRET_KEY.startswith("mock") and settings.CLERK_SECRET_KEY != "":
+    if org.clerk_org_id and settings.CLERK_SECRET_KEY and not settings.CLERK_SECRET_KEY.startswith("mock") and settings.CLERK_SECRET_KEY != "":
         membership_payload = {
             "user_id": clerk_user_id,
             "role": clerk_role
@@ -495,7 +571,7 @@ async def invite_user(
         }
         try:
             requests.post(
-                f"https://api.clerk.com/v1/organizations/{tenant.clerk_org_id}/memberships",
+                f"https://api.clerk.com/v1/organizations/{org.clerk_org_id}/memberships",
                 json=membership_payload,
                 headers=headers
             )
@@ -551,3 +627,92 @@ async def invite_user(
         "temp_password": temp_password,
         "user_id": db_user.id
     }
+
+
+# ==============================================================================
+# API KEY MANAGEMENT ENDPOINTS
+# ==============================================================================
+import secrets
+import hashlib
+from datetime import timedelta
+from fastapi import Response
+from app.models.system import ApiKey
+from app.modules.system.schemas import ApiKeyCreate, ApiKeyResponse, ApiKeyCreatedResponse
+
+@router.get("/api-keys", response_model=list[ApiKeyResponse])
+async def list_api_keys(
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSession = Depends(require_org)
+):
+    """
+    List all active API keys for the current organization.
+    """
+    stmt = select(ApiKey).where(ApiKey.is_active == True)
+    res = await db.execute(stmt)
+    return res.scalars().all()
+
+@router.post("/api-keys", response_model=ApiKeyCreatedResponse, status_code=status.HTTP_201_CREATED)
+async def create_api_key(
+    key_in: ApiKeyCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSession = Depends(require_org)
+):
+    """
+    Generate a new API key for the current organization.
+    The plain-text key is returned only once in the response.
+    """
+    # 1. Generate token
+    raw_token = f"sk_live_{secrets.token_urlsafe(32)}"
+    prefix = raw_token[:14] # e.g. "sk_live_xxxxxx"
+    hashed = hashlib.sha256(raw_token.encode()).hexdigest()
+
+    # Calculate expiry
+    expires_at = None
+    if key_in.expires_in_days:
+        expires_at = datetime.utcnow() + timedelta(days=key_in.expires_in_days)
+
+    # 2. Save in database
+    api_key_obj = ApiKey(
+        tenant_id=current_user.tenant_id,
+        name=key_in.name,
+        hashed_key=hashed,
+        key_prefix=prefix,
+        expires_at=expires_at,
+        is_active=True
+    )
+    db.add(api_key_obj)
+    await db.commit()
+    await db.refresh(api_key_obj)
+
+    # 3. Return response with plain text key
+    return ApiKeyCreatedResponse(
+        id=api_key_obj.id,
+        tenant_id=api_key_obj.tenant_id,
+        name=api_key_obj.name,
+        key_prefix=api_key_obj.key_prefix,
+        expires_at=api_key_obj.expires_at,
+        last_used_at=api_key_obj.last_used_at,
+        is_active=api_key_obj.is_active,
+        created_at=api_key_obj.created_at,
+        key=raw_token
+    )
+
+@router.delete("/api-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_api_key(
+    key_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSession = Depends(require_org)
+):
+    """
+    Revoke/delete an API key for the current organization.
+    """
+    stmt = select(ApiKey).where(ApiKey.id == key_id)
+    res = await db.execute(stmt)
+    api_key_obj = res.scalars().first()
+    if not api_key_obj:
+        raise HTTPException(status_code=404, detail="API key not found")
+
+    await db.delete(api_key_obj)
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+

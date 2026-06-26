@@ -1,12 +1,18 @@
 import jwt
 import requests
+import hashlib
+from datetime import datetime
 from fastapi import Depends, HTTPException, Security, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyHeader
 from typing import Dict, List, Optional
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
-from app.database import tenant_context, user_context
+from app.database import tenant_context, user_context, get_db
+from app.models.system import ApiKey
 
-security_scheme = HTTPBearer()
+security_scheme = HTTPBearer(auto_error=False)
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 # InMemory cache for JWKS keys to avoid requesting Clerk on every request
 _jwks_cache: Dict = {}
@@ -46,9 +52,66 @@ class UserSession:
         self.role = role # Role within the organization
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Security(security_scheme)
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(security_scheme),
+    x_api_key: Optional[str] = Security(api_key_header),
+    db: AsyncSession = Depends(get_db)
 ) -> UserSession:
-    token = credentials.credentials
+    # 1. Determine key/token
+    token = None
+    if credentials:
+        token = credentials.credentials
+    elif x_api_key:
+        token = x_api_key
+
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication credentials were not provided."
+        )
+
+    # 2. Check if it is an API Key (starts with "sk_")
+    if token.startswith("sk_"):
+        hashed = hashlib.sha256(token.encode()).hexdigest()
+        
+        # Query active keys, skip tenant filter to resolve globally
+        stmt = select(ApiKey).where(ApiKey.hashed_key == hashed, ApiKey.is_active == True).execution_options(skip_tenant_filter=True)
+        res = await db.execute(stmt)
+        api_key_obj = res.scalars().first()
+        
+        if not api_key_obj:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid API Key."
+            )
+            
+        # Check expiry
+        if api_key_obj.expires_at and api_key_obj.expires_at < datetime.utcnow():
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="API Key has expired."
+            )
+            
+        # Update last_used_at
+        await db.execute(
+            update(ApiKey)
+            .where(ApiKey.id == api_key_obj.id)
+            .values(last_used_at=datetime.utcnow())
+            .execution_options(skip_tenant_filter=True)
+        )
+        await db.commit()
+        
+        # Set database context variables
+        user_context.set("api_key_user")
+        tenant_context.set(api_key_obj.tenant_id)
+        
+        return UserSession(
+            user_id="api_key_user",
+            email="api_key@supplier-erp.local",
+            tenant_id=api_key_obj.tenant_id,
+            role="org:admin" # API keys bypass to org admin role
+        )
+
+    # 3. Clerk JWT Authentication
     try:
         # Get Key ID (kid) from token header
         unverified_header = jwt.get_unverified_header(token)
@@ -63,8 +126,6 @@ async def get_current_user(
         public_key = get_clerk_public_key(kid)
         
         # Decode and verify token
-        # Clerk JWTs contain: sub (clerk user ID), org_id (clerk organization ID), etc.
-        # Note: verify audience if settings.CLERK_AUDIENCE is specified
         options = {}
         if not settings.CLERK_AUDIENCE:
             options["verify_aud"] = False
@@ -78,14 +139,8 @@ async def get_current_user(
         )
         
         user_id = payload.get("sub")
-        # Clerk user email might be in metadata or we sync it via clerk webhooks
         email = payload.get("email") or ""
-        
-        # Retrieve org_id (tenant_id)
-        # Clerk provides org_id in JWT claims if user is acting in an organization context
         tenant_id = payload.get("org_id")
-        
-        # Clerk custom session claims can provide the user's role in the organization
         role = payload.get("org_role")
         
         if not user_id:

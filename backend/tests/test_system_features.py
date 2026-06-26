@@ -1,11 +1,11 @@
 import pytest
 from sqlalchemy import select
-from app.models.system import Tenant, User, Document, Plan
+from app.models.system import Organization, User, Document, Plan
 from app.models.supplier import Supplier
 from app.models.purchase import PurchaseOrder
 from app.models.finance import Payment
 from app.models.inventory import Inventory, Product, Warehouse
-from app.core.auth import require_auth, UserSession
+from app.core.auth import require_auth, require_org, UserSession
 from app.main import app
 
 # Mock auth dependency for tests
@@ -23,8 +23,8 @@ async def test_get_platform_analytics(client, db_session):
     Test that the platform analytics endpoint correctly aggregates counts across all tenants.
     """
     # 1. Setup mock data
-    tenant_a = Tenant(name="Tenant A", clerk_org_id="org_a", status="active")
-    tenant_b = Tenant(name="Tenant B", clerk_org_id="org_b", status="active")
+    tenant_a = Organization(name="Tenant A", slug="tenant-a", clerk_org_id="org_a", status="active")
+    tenant_b = Organization(name="Tenant B", slug="tenant-b", clerk_org_id="org_b", status="active")
     db_session.add_all([tenant_a, tenant_b])
     await db_session.commit()
     await db_session.refresh(tenant_a)
@@ -131,7 +131,7 @@ async def test_invite_user(client, db_session):
     app.dependency_overrides[require_auth] = mock_require_auth
 
     # Create a tenant
-    tenant = Tenant(name="Invite Org", clerk_org_id="org_invite_123", status="active")
+    tenant = Organization(name="Invite Org", slug="invite-org", clerk_org_id="org_invite_123", status="active")
     db_session.add(tenant)
     await db_session.commit()
     await db_session.refresh(tenant)
@@ -174,7 +174,7 @@ async def test_list_users(client, db_session):
     Test listing all platform users (Admin-only).
     """
     # 1. Setup active user
-    tenant = Tenant(name="List Org", clerk_org_id="org_list_123", status="active")
+    tenant = Organization(name="List Org", slug="list-org", clerk_org_id="org_list_123", status="active")
     db_session.add(tenant)
     await db_session.commit()
     await db_session.refresh(tenant)
@@ -205,4 +205,92 @@ async def test_list_users(client, db_session):
         assert "listed_user@test.com" in emails
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_api_key_lifecycle(client, db_session):
+    """
+    Test the complete lifecycle of API keys: creation, listing, authentication, and revocation.
+    """
+    # 1. Create a dummy organization
+    org = Organization(name="API Key Org", slug="api-key-org", clerk_org_id="org_api_key_123", status="active")
+    db_session.add(org)
+    await db_session.commit()
+    await db_session.refresh(org)
+
+    # Mock require_org to represent an admin user in this org
+    async def mock_require_org_api_key():
+        return UserSession(
+            user_id="usr_admin",
+            email="admin@api-key.com",
+            tenant_id=org.clerk_org_id,
+            role="org:admin"
+        )
+
+    # 2. Generate API Key (admin authenticates via Clerk first)
+    app.dependency_overrides[require_org] = mock_require_org_api_key
+    
+    create_payload = {
+        "name": "Integration Test Key",
+        "expires_in_days": 30
+    }
+    
+    response = await client.post("/api/v1/system/api-keys", json=create_payload)
+    assert response.status_code == 201
+    created_data = response.json()
+    
+    assert created_data["name"] == "Integration Test Key"
+    assert created_data["tenant_id"] == org.clerk_org_id
+    assert created_data["key"].startswith("sk_live_")
+    assert created_data["key_prefix"] == created_data["key"][:14]
+    
+    raw_key = created_data["key"]
+    key_id = created_data["id"]
+
+    # 3. List API Keys and verify they exist (but plain text key is NOT returned)
+    list_response = await client.get("/api/v1/system/api-keys")
+    assert list_response.status_code == 200
+    list_data = list_response.json()
+    assert len(list_data) == 1
+    assert list_data[0]["id"] == key_id
+    assert "key" not in list_data[0] # Plain text key is never shown again!
+
+    # 4. Authenticate using the generated API Key
+    # Clear mock overrides so we test real authentication via X-API-Key header
+    app.dependency_overrides.clear()
+
+    # Pass the API key to a route that requires organization context
+    # Use headers to pass the API Key and the tenant slug (to resolve organization context)
+    headers = {
+        "X-API-Key": raw_key,
+        "X-Tenant-Slug": "api-key-org"
+    }
+    
+    # We should be able to query the API keys using the API Key itself!
+    auth_response = await client.get("/api/v1/system/api-keys", headers=headers)
+    assert auth_response.status_code == 200
+    auth_data = auth_response.json()
+    assert len(auth_data) == 1
+    assert auth_data[0]["id"] == key_id
+
+    # 5. Verify invalid API key returns 401
+    bad_headers = {
+        "X-API-Key": "sk_live_invalidkeyhere",
+        "X-Tenant-Slug": "api-key-org"
+    }
+    bad_response = await client.get("/api/v1/system/api-keys", headers=bad_headers)
+    assert bad_response.status_code == 401
+    assert bad_response.json()["detail"] == "Invalid API Key."
+
+    # 6. Revoke (Delete) the API Key
+    # Re-apply mock so we can perform administrative delete
+    app.dependency_overrides[require_org] = mock_require_org_api_key
+    del_response = await client.delete(f"/api/v1/system/api-keys/{key_id}")
+    assert del_response.status_code == 204
+
+    # 7. Verify revoked API key can no longer be used to authenticate
+    app.dependency_overrides.clear()
+    revoked_response = await client.get("/api/v1/system/api-keys", headers=headers)
+    assert revoked_response.status_code == 401
+
 

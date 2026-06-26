@@ -51,13 +51,7 @@ export default function LandingPage() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
 
-  // Stats Counters
-  const [stats, setStats] = useState({
-    customers: 0,
-    orgs: 0,
-    uptime: 0,
-    transactions: 0
-  });
+
 
   const [liveStats, setLiveStats] = useState({
     total_organizations: 0,
@@ -91,35 +85,8 @@ export default function LandingPage() {
     };
     window.addEventListener("scroll", handleScroll);
 
-    // Simulate animated counters on load
-    const duration = 2000;
-    const steps = 50;
-    const interval = duration / steps;
-    let step = 0;
-
-    const timer = setInterval(() => {
-      step++;
-      setStats({
-        customers: Math.floor((5000 / steps) * step),
-        orgs: Math.floor((12000 / steps) * step),
-        uptime: parseFloat(((99.9 / steps) * step).toFixed(2)),
-        transactions: Math.floor((500 / steps) * step)
-      });
-
-      if (step >= steps) {
-        clearInterval(timer);
-        setStats({
-          customers: 5000,
-          orgs: 12000,
-          uptime: 99.99,
-          transactions: 500
-        });
-      }
-    }, interval);
-
     return () => {
       window.removeEventListener("scroll", handleScroll);
-      clearInterval(timer);
     };
   }, []);
 
@@ -551,38 +518,22 @@ export default function LandingPage() {
           </div>
 
           {/* Stats Counters Grid */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mt-12 pt-8 border-t border-slate-250/50">
-            <div className="text-center">
-              <span className="text-2xl sm:text-3xl font-black text-slate-900">{formatSmartNumber(liveStats.total_organizations)}</span>
-              <span className="text-xs text-slate-450 block font-medium uppercase mt-1.5">Active Organizations</span>
+          <div className="max-w-2xl mx-auto grid grid-cols-2 gap-8 sm:gap-12 mt-12 pt-8 border-t border-slate-250/50">
+            <div className="text-center group p-4 rounded-2xl hover:bg-slate-200/30 transition-all duration-350">
+              <span className="text-3xl sm:text-4xl font-black text-blue-600 dark:text-blue-400 block">
+                {formatSmartNumber(liveStats.total_organizations)}
+              </span>
+              <span className="text-xs text-slate-450 block font-semibold uppercase tracking-wider mt-2 group-hover:text-blue-600 transition-colors">
+                Active Organizations
+              </span>
             </div>
-            <div className="text-center">
-              <span className="text-2xl sm:text-3xl font-black text-slate-900">{formatSmartNumber(liveStats.total_active_users)}</span>
-              <span className="text-xs text-slate-450 block font-medium uppercase mt-1.5">Active Users</span>
-            </div>
-            <div className="text-center">
-              <span className="text-2xl sm:text-3xl font-black text-slate-900">{formatSmartNumber(liveStats.total_suppliers)}</span>
-              <span className="text-xs text-slate-450 block font-medium uppercase mt-1.5">Verified Suppliers</span>
-            </div>
-            <div className="text-center">
-              <span className="text-2xl sm:text-3xl font-black text-slate-900">{formatSmartNumber(liveStats.total_purchase_orders)}</span>
-              <span className="text-xs text-slate-450 block font-medium uppercase mt-1.5">Purchase Orders</span>
-            </div>
-            <div className="text-center mt-4 md:mt-0">
-              <span className="text-2xl sm:text-3xl font-black text-slate-900">{formatSmartNumber(liveStats.total_payments)}</span>
-              <span className="text-xs text-slate-450 block font-medium uppercase mt-1.5">Payments Logged</span>
-            </div>
-            <div className="text-center mt-4 md:mt-0">
-              <span className="text-2xl sm:text-3xl font-black text-slate-900">{formatSmartNumber(liveStats.total_inventory_items)}</span>
-              <span className="text-xs text-slate-450 block font-medium uppercase mt-1.5">Inventory Stocked</span>
-            </div>
-            <div className="text-center mt-4 md:mt-0">
-              <span className="text-2xl sm:text-3xl font-black text-slate-900">₹{formatSmartNumber(liveStats.total_revenue)}</span>
-              <span className="text-xs text-slate-450 block font-medium uppercase mt-1.5">Total Revenue</span>
-            </div>
-            <div className="text-center mt-4 md:mt-0">
-              <span className="text-2xl sm:text-3xl font-black text-slate-900">{formatSmartNumber(liveStats.total_documents_uploaded)}</span>
-              <span className="text-xs text-slate-450 block font-medium uppercase mt-1.5">Documents Stored</span>
+            <div className="text-center group p-4 rounded-2xl hover:bg-slate-200/30 transition-all duration-350">
+              <span className="text-3xl sm:text-4xl font-black text-indigo-600 dark:text-indigo-400 block">
+                {formatSmartNumber(liveStats.total_active_users)}
+              </span>
+              <span className="text-xs text-slate-450 block font-semibold uppercase tracking-wider mt-2 group-hover:text-indigo-600 transition-colors">
+                Active Users
+              </span>
             </div>
           </div>
 

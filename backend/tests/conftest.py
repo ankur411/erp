@@ -22,6 +22,12 @@ TestSessionLocal = sessionmaker(
     expire_on_commit=False
 )
 
+import app.database as app_db
+app_db.SessionLocal = TestSessionLocal
+
+import app.core.tenant_middleware as middleware
+middleware.SessionLocal = TestSessionLocal
+
 @pytest.fixture(scope="session")
 def event_loop():
     loop = asyncio.get_event_loop_policy().new_event_loop()

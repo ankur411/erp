@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     # App Settings
     ENV: str = "development"
     PROJECT_NAME: str = "SupplierERP API"
+    ROOT_DOMAIN: str = "localhost"
     API_V1_STR: str = "/api/v1"
     ALLOWED_ORIGINS: str = ""
     

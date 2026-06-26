@@ -31,16 +31,19 @@ class DocumentResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-class TenantAccessUpdate(BaseModel):
+class OrganizationAccessUpdate(BaseModel):
     suppliers: bool
     products: bool
     inventory: bool
     purchase_orders: bool
     finance: bool
 
-class TenantResponse(BaseModel):
+class OrganizationResponse(BaseModel):
     id: str
     name: str
+    slug: str
+    custom_domain: Optional[str] = None
+    is_custom_domain: bool = False
     clerk_org_id: str
     status: str
     created_at: datetime
@@ -113,4 +116,27 @@ class UserResponse(BaseModel):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ApiKeyCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    expires_in_days: Optional[int] = Field(None, ge=1, description="Expiry duration in days")
+
+
+class ApiKeyResponse(BaseModel):
+    id: str
+    tenant_id: str
+    name: str
+    key_prefix: str
+    expires_at: Optional[datetime] = None
+    last_used_at: Optional[datetime] = None
+    is_active: bool
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ApiKeyCreatedResponse(ApiKeyResponse):
+    key: str
+
 

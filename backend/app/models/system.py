@@ -8,23 +8,26 @@ from app.database import Base, HasTenant
 def generate_uuid() -> str:
     return str(uuid.uuid4())
 
-class Tenant(Base):
-    __tablename__ = "tenants"
+class Organization(Base):
+    __tablename__ = "organizations"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    slug: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    custom_domain: Mapped[Optional[str]] = mapped_column(String(255), unique=True, index=True, nullable=True)
+    is_custom_domain: Mapped[bool] = mapped_column(default=False, nullable=False)
     clerk_org_id: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     status: Mapped[str] = mapped_column(String(50), default="active", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     access_config: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
-    users: Mapped[list["User"]] = relationship("User", back_populates="tenant", cascade="all, delete-orphan")
+    users: Mapped[list["User"]] = relationship("User", back_populates="organization", cascade="all, delete-orphan")
 
 class User(Base):
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
-    tenant_id: Mapped[str] = mapped_column(String(36), ForeignKey("tenants.id"), nullable=False)
+    tenant_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=False)
     clerk_user_id: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     email: Mapped[str] = mapped_column(String(255), nullable=False)
     first_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
@@ -32,7 +35,7 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(50), nullable=False) # Role in system
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
-    tenant: Mapped[Tenant] = relationship("Tenant", back_populates="users")
+    organization: Mapped[Organization] = relationship("Organization", back_populates="users")
 
 class AuditLog(Base, HasTenant):
     __tablename__ = "audit_logs"
@@ -71,4 +74,16 @@ class Plan(Base):
     trial_days: Mapped[int] = mapped_column(default=14, nullable=False)
     limits: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True) # e.g. {"warehouses": 2, "suppliers": 50}
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class ApiKey(Base, HasTenant):
+    __tablename__ = "api_keys"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    hashed_key: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    key_prefix: Mapped[str] = mapped_column(String(16), nullable=False)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
 
