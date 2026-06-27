@@ -46,15 +46,23 @@ app.add_middleware(
 from app.core.tenant_middleware import TenantResolutionMiddleware
 app.add_middleware(TenantResolutionMiddleware)
 
+import traceback
+
 # Custom Global Exception Handler for logging to Sentry
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     if settings.SENTRY_DSN:
         sentry_sdk.capture_exception(exc)
         
+    tb_str = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={"detail": "An internal server error occurred. Please try again later."}
+        content={
+            "detail": "An internal server error occurred. Please try again later.",
+            "error_type": type(exc).__name__,
+            "error_message": str(exc),
+            "traceback": tb_str
+        }
     )
 
 # Health Check Endpoint
