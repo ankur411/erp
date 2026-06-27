@@ -102,7 +102,7 @@ class UserInviteRequest(BaseModel):
     email: str
     first_name: Optional[str] = None
     last_name: Optional[str] = None
-    tenant_id: str
+    tenant_id: Optional[str] = None
     role: str
 
 class UserResponse(BaseModel):

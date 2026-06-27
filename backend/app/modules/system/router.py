@@ -977,11 +977,16 @@ async def invite_user(
          raise HTTPException(status_code=400, detail="User with this email already exists")
 
     # 2. Get the Organization to fetch Clerk Org ID
-    org_stmt = select(Organization).where(Organization.id == invite_in.tenant_id)
-    org_res = await db.execute(org_stmt)
-    org = org_res.scalars().first()
-    if not org:
-        raise HTTPException(status_code=404, detail="Selected organization not found")
+    org = None
+    is_platform_admin = invite_in.role == "platform_admin"
+    if not is_platform_admin:
+        if not invite_in.tenant_id or invite_in.tenant_id == "system":
+            raise HTTPException(status_code=400, detail="Tenant ID is required for organization users")
+        org_stmt = select(Organization).where(Organization.id == invite_in.tenant_id)
+        org_res = await db.execute(org_stmt)
+        org = org_res.scalars().first()
+        if not org:
+            raise HTTPException(status_code=404, detail="Selected organization not found")
 
     # 3. Generate a temporary password
     temp_password = f"TempPass_{uuid.uuid4().hex[:8]}!"
@@ -1020,7 +1025,7 @@ async def invite_user(
         # Map specific system roles to Clerk custom roles if applicable, otherwise use org:member
         clerk_role = "org:member"
 
-    if org.clerk_org_id and settings.CLERK_SECRET_KEY and not settings.CLERK_SECRET_KEY.startswith("mock") and settings.CLERK_SECRET_KEY != "":
+    if org and org.clerk_org_id and settings.CLERK_SECRET_KEY and not settings.CLERK_SECRET_KEY.startswith("mock") and settings.CLERK_SECRET_KEY != "":
         membership_payload = {
             "user_id": clerk_user_id,
             "role": clerk_role
@@ -1040,7 +1045,7 @@ async def invite_user(
 
     # 6. Save in local database
     db_user = User(
-        tenant_id=invite_in.tenant_id,
+        tenant_id=None if is_platform_admin else invite_in.tenant_id,
         clerk_user_id=clerk_user_id,
         email=invite_in.email,
         first_name=invite_in.first_name,

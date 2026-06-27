@@ -172,6 +172,45 @@ async def test_invite_user(client, db_session):
     app.dependency_overrides.clear()
 
 @pytest.mark.asyncio
+async def test_invite_platform_admin(client, db_session):
+    """
+    Test platform admin invitation workflow does not require a tenant organization
+    and successfully registers the user in local DB with tenant_id set to None.
+    """
+    app.dependency_overrides[require_auth] = mock_require_auth
+
+    payload = {
+        "email": "invited_admin@test.com",
+        "first_name": "Platform",
+        "last_name": "Admin",
+        "tenant_id": "system",
+        "role": "platform_admin"
+    }
+
+    from app.config import settings
+    original_key = settings.CLERK_SECRET_KEY
+    settings.CLERK_SECRET_KEY = "mock_secret_key"
+    try:
+        response = await client.post("/api/v1/system/users/invite", json=payload)
+        assert response.status_code == 201
+        data = response.json()
+        assert data["status"] == "success"
+        assert "temp_password" in data
+        assert "clerk_user_id" in data
+    finally:
+        settings.CLERK_SECRET_KEY = original_key
+
+    # Verify in DB that tenant_id is indeed None
+    stmt = select(User).where(User.email == "invited_admin@test.com")
+    res = await db_session.execute(stmt)
+    db_user = res.scalars().first()
+    assert db_user is not None
+    assert db_user.tenant_id is None
+    assert db_user.role == "platform_admin"
+
+    app.dependency_overrides.clear()
+
+@pytest.mark.asyncio
 async def test_list_users(client, db_session):
     """
     Test listing all platform users (Admin-only).
