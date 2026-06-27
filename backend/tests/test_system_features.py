@@ -488,6 +488,9 @@ async def test_invitations_lifecycle_flow(client, db_session):
 
     app.dependency_overrides[require_org] = mock_require_org_invite
 
+    from app.config import settings
+    original_key = settings.CLERK_SECRET_KEY
+    settings.CLERK_SECRET_KEY = "mock_secret_key"
     try:
         # Create invitation
         payload = {
@@ -526,6 +529,7 @@ async def test_invitations_lifecycle_flow(client, db_session):
         assert inv_res.scalars().first().status == "revoked"
 
     finally:
+        settings.CLERK_SECRET_KEY = original_key
         app.dependency_overrides.clear()
 
 

@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 class ImportConfirmRequest(BaseModel):
     on_duplicate: str = Field(default="skip", description="Strategy for duplicate records: 'skip', 'overwrite', 'error'")
@@ -12,8 +12,7 @@ class ImportLogResponse(BaseModel):
     message: Optional[str] = None
     imported_id: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class ImportJobResponse(BaseModel):
     id: str
@@ -26,8 +25,7 @@ class ImportJobResponse(BaseModel):
     created_at: datetime
     logs: Optional[List[ImportLogResponse]] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class ImportPreviewRow(BaseModel):
     row_number: int

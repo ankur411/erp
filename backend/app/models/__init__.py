@@ -8,6 +8,7 @@ from app.models.inventory import Category, Product, Warehouse, Inventory, Invent
 from app.models.purchase import PurchaseOrder, PurchaseOrderItem
 from app.models.finance import Invoice, Payment
 from app.models.imports import ImportJob, ImportLog
+from app.models.integration import Integration, IntegrationSyncHistory, Customer, Employee, Attendance
 
 __all__ = [
     "Base",
@@ -30,5 +31,10 @@ __all__ = [
     "ImportLog",
     "OrganizationRequest",
     "OrganizationDepartment",
-    "OrganizationInvitation"
+    "OrganizationInvitation",
+    "Integration",
+    "IntegrationSyncHistory",
+    "Customer",
+    "Employee",
+    "Attendance"
 ]

@@ -9,7 +9,28 @@ from app.modules.purchase.router import router as purchase_router
 from app.modules.finance.router import router as finance_router
 from app.modules.system.router import router as system_router
 from app.modules.imports.router import router as imports_router
+from app.modules.integrations.router import router as integrations_router
+import asyncio
+from app.modules.integrations.services import run_scheduled_syncs
+from contextlib import asynccontextmanager
 
+async def schedule_loop():
+    while True:
+        try:
+            await run_scheduled_syncs()
+        except Exception as e:
+            pass
+        await asyncio.sleep(60)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(schedule_loop())
+    yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
 
 # Initialize Sentry if DSN is set
 if settings.SENTRY_DSN:
@@ -21,7 +42,8 @@ if settings.SENTRY_DSN:
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    openapi_url=f"{settings.API_V1_STR}/openapi.json"
+    openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    lifespan=lifespan
 )
 
 # Set up CORS middleware
@@ -77,4 +99,4 @@ app.include_router(inventory_router, prefix=settings.API_V1_STR)
 app.include_router(purchase_router, prefix=settings.API_V1_STR)
 app.include_router(finance_router, prefix=settings.API_V1_STR)
 app.include_router(imports_router, prefix=settings.API_V1_STR)
-
+app.include_router(integrations_router, prefix=settings.API_V1_STR)

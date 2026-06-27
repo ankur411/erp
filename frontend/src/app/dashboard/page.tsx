@@ -27,9 +27,18 @@ import {
   HelpCircle,
   DollarSign,
   Check,
-  LogOut
+  LogOut,
+  Link2,
+  Activity,
+  Play,
+  RefreshCw,
+  Undo2,
+  Power,
+  PowerOff,
+  Copy
 } from "lucide-react";
 import { SafeSignOutButton } from "@/components/SafeSignOutButton";
+import { useApi } from "@/lib/api";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -48,7 +57,7 @@ import { useERPStore, Supplier, Product, PurchaseOrder, Invoice, Payment } from 
 import { useAuth } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
 
-type TabType = "dashboard" | "suppliers" | "products" | "inventory" | "purchase" | "finance" | "tenant_control";
+type TabType = "dashboard" | "suppliers" | "products" | "inventory" | "purchase" | "finance" | "tenant_control" | "integrations";
 
 export default function DashboardPage() {
   const { isLoaded, orgId } = useAuth();
@@ -91,6 +100,220 @@ export default function DashboardPage() {
     recordPayment,
     updateTenantAccess
   } = useERPStore();
+
+  // Integrations state
+  const { authFetch } = useApi();
+  const [integrations, setIntegrations] = useState<any[]>([]);
+  const [loadingIntegrations, setLoadingIntegrations] = useState(false);
+  const [workflows, setWorkflows] = useState<any[]>([]);
+  const [syncHistory, setSyncHistory] = useState<any[]>([]);
+  const [activeIntegration, setActiveIntegration] = useState<any | null>(null);
+
+  // Connection form state
+  const [connMethod, setConnMethod] = useState<"api" | "webhook">("api");
+  const [connName, setConnName] = useState("");
+  const [connBaseUrl, setConnBaseUrl] = useState("");
+  const [connApiKey, setConnApiKey] = useState("");
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [savingConnection, setSavingConnection] = useState(false);
+
+  // Manual sync state
+  const [selectedWorkflow, setSelectedWorkflow] = useState<string>("");
+  const [syncTarget, setSyncTarget] = useState<string>("customers");
+  const [syncStrategy, setSyncStrategy] = useState<string>("skip");
+  const [syncingData, setSyncingData] = useState(false);
+
+  const loadWorkflows = async (id: number) => {
+    try {
+      const res = await authFetch(`/api/v1/integrations/${id}/workflows`);
+      if (res.ok) {
+        const data = await res.json();
+        setWorkflows(data);
+      }
+    } catch (err) {
+      console.error("Failed to load workflows", err);
+    }
+  };
+
+  const loadSyncHistory = async (id: number) => {
+    try {
+      const res = await authFetch(`/api/v1/integrations/${id}/sync-history`);
+      if (res.ok) {
+        const data = await res.json();
+        setSyncHistory(data);
+      }
+    } catch (err) {
+      console.error("Failed to load sync history", err);
+    }
+  };
+
+  const loadIntegrations = async () => {
+    setLoadingIntegrations(true);
+    try {
+      const res = await authFetch("/api/v1/integrations");
+      if (res.ok) {
+        const data = await res.json();
+        setIntegrations(data);
+        if (data.length > 0) {
+          setActiveIntegration(data[0]);
+          loadWorkflows(data[0].id);
+          loadSyncHistory(data[0].id);
+        } else {
+          setActiveIntegration(null);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to load integrations", err);
+    } finally {
+      setLoadingIntegrations(false);
+    }
+  };
+
+  React.useEffect(() => {
+    if (activeTab === "integrations") {
+      loadIntegrations();
+    }
+  }, [activeTab]);
+
+  const handleTestConnection = async () => {
+    if (!connBaseUrl) {
+      alert("n8n Base URL is required to test the connection.");
+      return;
+    }
+    setTestingConnection(true);
+    try {
+      const payload = {
+        type: "n8n",
+        config: {
+          n8n_base_url: connBaseUrl,
+          connection_method: connMethod
+        },
+        secrets: {
+          api_key: connApiKey
+        }
+      };
+      const res = await authFetch("/api/v1/integrations/test-connection", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert("Connection test succeeded! n8n instance is reachable.");
+      } else {
+        alert(`Connection test failed: ${data.error_message || "Unknown error"}`);
+      }
+    } catch (err) {
+      alert("Failed to connect to the backend server to test the integration.");
+    } finally {
+      setTestingConnection(false);
+    }
+  };
+
+  const handleConnect = async () => {
+    if (!connName) {
+      alert("Connection Name is required.");
+      return;
+    }
+    if (connMethod === "api" && !connBaseUrl) {
+      alert("n8n Base URL is required for API Connection.");
+      return;
+    }
+    setSavingConnection(true);
+    try {
+      const payload = {
+        name: connName,
+        type: "n8n",
+        connection_method: connMethod,
+        config: {
+          n8n_base_url: connBaseUrl
+        },
+        secrets: {
+          api_key: connApiKey
+        }
+      };
+      const res = await authFetch("/api/v1/integrations/connect", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        alert("n8n Integration connected successfully!");
+        setConnName("");
+        setConnBaseUrl("");
+        setConnApiKey("");
+        loadIntegrations();
+      } else {
+        const errData = await res.json();
+        alert(`Failed to connect integration: ${errData.detail || "Unknown error"}`);
+      }
+    } catch (err) {
+      alert("Failed to save integration.");
+    } finally {
+      setSavingConnection(false);
+    }
+  };
+
+  const handleDisconnect = async (id: number) => {
+    if (!confirm("Are you sure you want to disconnect this n8n instance? This will delete all credentials and webhook history.")) return;
+    try {
+      const res = await authFetch(`/api/v1/integrations/${id}/disconnect`, {
+        method: "POST"
+      });
+      if (res.ok) {
+        alert("n8n Integration disconnected.");
+        loadIntegrations();
+      } else {
+        alert("Failed to disconnect integration.");
+      }
+    } catch (err) {
+      alert("Error disconnecting integration.");
+    }
+  };
+
+  const handleManualSync = async (id: number) => {
+    setSyncingData(true);
+    try {
+      const payload = {
+        target_type: syncTarget,
+        duplicate_strategy: syncStrategy,
+        workflow_id: selectedWorkflow || undefined
+      };
+      const res = await authFetch(`/api/v1/integrations/${id}/import`, {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        alert("Manual sync run has been triggered in the background.");
+        setTimeout(() => {
+          loadSyncHistory(id);
+        }, 3000);
+      } else {
+        const errData = await res.json();
+        alert(`Failed to trigger sync: ${errData.detail || "Unknown error"}`);
+      }
+    } catch (err) {
+      alert("Error starting manual sync.");
+    } finally {
+      setSyncingData(false);
+    }
+  };
+
+  const handleRollback = async (syncId: number, integrationId: number) => {
+    if (!confirm("Are you sure you want to rollback this sync execution? This will revert all database insertions and modifications made during this sync.")) return;
+    try {
+      const res = await authFetch(`/api/v1/integrations/sync-history/${syncId}/rollback`, {
+        method: "POST"
+      });
+      if (res.ok) {
+        alert("Sync rollback completed successfully.");
+        loadSyncHistory(integrationId);
+      } else {
+        const errData = await res.json();
+        alert(`Rollback failed: ${errData.detail || "Unknown error"}`);
+      }
+    } catch (err) {
+      alert("Error during rollback.");
+    }
+  };
 
   // Modals state
   const [showAddSupplierModal, setShowAddSupplierModal] = useState(false);
@@ -260,7 +483,8 @@ export default function DashboardPage() {
               { id: "products", label: "Product Catalog", icon: Package },
               { id: "inventory", label: "Inventory & Stock", icon: WarehouseIcon },
               { id: "purchase", label: "Purchase Orders", icon: FileText },
-              { id: "finance", label: "Finance & Invoices", icon: CreditCard }
+              { id: "finance", label: "Finance & Invoices", icon: CreditCard },
+              { id: "integrations", label: "n8n Integrations", icon: Link2 }
             ].filter(item => isModuleEnabled(item.id)).map((item) => {
               const Icon = item.icon;
               const isActive = activeTab === item.id;
@@ -976,6 +1200,394 @@ export default function DashboardPage() {
                   ))}
                </div>
             </div>
+          )}
+
+          {/* TAB 8: INTEGRATIONS */}
+          {activeTab === "integrations" && (
+             <div className="space-y-6">
+                <div className="flex justify-between items-center">
+                   <div>
+                      <h2 className="text-xl font-bold tracking-tight">n8n Automation Integrations</h2>
+                      <p className="text-xs text-zinc-500 mt-1">Connect your n8n workflow engine to automate data imports, webhook subscriptions, and real-time syncing.</p>
+                   </div>
+                </div>
+
+                {!activeIntegration ? (
+                   /* No integration connected: Setup form */
+                   <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6 max-w-2xl space-y-6 shadow-sm">
+                      <div className="border-b border-zinc-200 dark:border-zinc-800 pb-4">
+                         <h3 className="text-sm font-bold">Configure External Automation Engine</h3>
+                         <p className="text-[11px] text-zinc-400 mt-0.5">Choose your connection style to sync Customers, Employees, and Attendance registries.</p>
+                      </div>
+
+                      {/* Connection Method Selector */}
+                      <div className="flex gap-2 p-1 bg-zinc-100 dark:bg-zinc-800 rounded-lg max-w-md">
+                         <button
+                            type="button"
+                            onClick={() => { setConnMethod("api"); }}
+                            className={`flex-1 py-1.5 rounded-md text-xs font-bold transition-all ${
+                               connMethod === "api"
+                                  ? "bg-white dark:bg-zinc-900 shadow-sm text-zinc-900 dark:text-white"
+                                  : "text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
+                            }`}
+                         >
+                            n8n API Connection
+                         </button>
+                         <button
+                            type="button"
+                            onClick={() => { setConnMethod("webhook"); }}
+                            className={`flex-1 py-1.5 rounded-md text-xs font-bold transition-all ${
+                               connMethod === "webhook"
+                                  ? "bg-white dark:bg-zinc-900 shadow-sm text-zinc-900 dark:text-white"
+                                  : "text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
+                            }`}
+                         >
+                            Webhook Ingestion
+                         </button>
+                      </div>
+
+                      <div className="space-y-4">
+                         <div className="grid grid-cols-2 gap-4">
+                            <div className="col-span-2 sm:col-span-1">
+                               <label className="text-[10px] font-bold text-zinc-400 block mb-1">Connection Name</label>
+                               <input
+                                  type="text"
+                                  placeholder="e.g. Production n8n Engine"
+                                  value={connName}
+                                  onChange={(e) => setConnName(e.target.value)}
+                                  className="w-full text-xs border rounded p-2 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700"
+                               />
+                            </div>
+                            {connMethod === "api" && (
+                               <div className="col-span-2 sm:col-span-1">
+                                  <label className="text-[10px] font-bold text-zinc-400 block mb-1">n8n Base URL</label>
+                                  <input
+                                     type="text"
+                                     placeholder="https://automation.company.com"
+                                     value={connBaseUrl}
+                                     onChange={(e) => setConnBaseUrl(e.target.value)}
+                                     className="w-full text-xs border rounded p-2 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700"
+                                  />
+                               </div>
+                            )}
+                         </div>
+
+                         {connMethod === "api" ? (
+                            <div>
+                               <label className="text-[10px] font-bold text-zinc-400 block mb-1">API Key</label>
+                               <input
+                                  type="password"
+                                  placeholder="••••••••••••••••••••••••"
+                                  value={connApiKey}
+                                  onChange={(e) => setConnApiKey(e.target.value)}
+                                  className="w-full text-xs border rounded p-2 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700"
+                               />
+                               <p className="text-[9px] text-zinc-400 mt-1">Stored securely using Fernet 256-bit symmetric encryption.</p>
+                            </div>
+                         ) : (
+                            <div className="p-4 bg-zinc-50 dark:bg-zinc-900/40 border border-zinc-100 dark:border-zinc-800 rounded-lg">
+                               <h4 className="text-xs font-bold mb-1">Incoming Webhook Ingestion</h4>
+                               <p className="text-[10px] text-zinc-400 leading-relaxed">
+                                  Once connected, the system will generate public webhooks for each corporate event (e.g. Customer Created, Supplier Created).
+                                  Your n8n workflows can then POST JSON payloads to these URLs to keep databases synchronized in real time.
+                               </p>
+                            </div>
+                         )}
+                      </div>
+
+                      <div className="flex gap-3 pt-2 border-t border-zinc-100 dark:border-zinc-850 justify-end">
+                         {connMethod === "api" && (
+                            <button
+                               type="button"
+                               disabled={testingConnection}
+                               onClick={handleTestConnection}
+                               className="px-4 py-2 border rounded-lg text-xs font-semibold hover:bg-zinc-50 dark:hover:bg-zinc-800 disabled:opacity-50"
+                            >
+                               {testingConnection ? "Testing..." : "Test Connection"}
+                            </button>
+                         )}
+                         <button
+                            type="button"
+                            disabled={savingConnection}
+                            onClick={handleConnect}
+                            className="px-4 py-2 bg-zinc-900 text-white dark:bg-white dark:text-black font-semibold rounded-lg text-xs disabled:opacity-50"
+                         >
+                            {savingConnection ? "Connecting..." : "Connect Engine"}
+                         </button>
+                      </div>
+                   </div>
+                ) : (
+                   /* Active integration dashboard */
+                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                      
+                      {/* Left Sidebar: Connection Status & Actions */}
+                      <div className="lg:col-span-1 space-y-6">
+                         <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5 space-y-4 shadow-sm">
+                            <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-3">
+                               <div>
+                                  <h3 className="text-xs font-bold">{activeIntegration.name}</h3>
+                                  <span className="text-[9px] text-zinc-400 uppercase tracking-wider font-bold">
+                                     {activeIntegration.connection_method === "api" ? "n8n API Connected" : "Webhook Ingestion"}
+                                  </span>
+                               </div>
+                               <span className="flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-400">
+                                  <span className="h-1.5 w-1.5 bg-emerald-500 rounded-full animate-ping"></span>
+                                  Online
+                               </span>
+                            </div>
+
+                            <div className="space-y-2.5 text-xs">
+                               {activeIntegration.n8n_base_url && (
+                                  <div>
+                                     <span className="text-[10px] font-bold text-zinc-400 block">n8n Engine URL</span>
+                                     <span className="font-mono text-[11px] truncate block">{activeIntegration.n8n_base_url}</span>
+                                  </div>
+                               )}
+                               <div>
+                                  <span className="text-[10px] font-bold text-zinc-400 block">Last Active Check</span>
+                                  <span>
+                                     {activeIntegration.last_connected_at 
+                                        ? new Date(activeIntegration.last_connected_at).toLocaleString() 
+                                        : "Just now"}
+                                  </span>
+                               </div>
+                            </div>
+
+                            <div className="pt-2 border-t border-zinc-200 dark:border-zinc-800">
+                               <button
+                                  type="button"
+                                  onClick={() => handleDisconnect(activeIntegration.id)}
+                                  className="w-full flex items-center justify-center gap-1.5 py-2 border border-red-200 hover:bg-red-50 text-red-650 hover:text-red-700 dark:border-red-900/30 dark:hover:bg-red-950/20 text-xs font-bold rounded-lg transition-colors"
+                               >
+                                  <PowerOff className="h-3.5 w-3.5" />
+                                  Disconnect Instance
+                               </button>
+                            </div>
+                         </div>
+
+                         {/* Webhook URLs list if webhook mode */}
+                         {activeIntegration.connection_method === "webhook" ? (
+                            <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5 space-y-4 shadow-sm">
+                               <h3 className="text-xs font-bold">Webhook Trigger Endpoints</h3>
+                               <p className="text-[10px] text-zinc-400">Use these trigger URLs in your n8n workflow webhook nodes to import data.</p>
+                               
+                               <div className="space-y-3 max-h-[350px] overflow-y-auto pr-1">
+                                  {["Customer Created", "Supplier Created", "Invoice Created", "Payment Completed", "Purchase Order Created", "Inventory Updated", "Attendance Synced"].map((event) => {
+                                     const formattedEvent = event.toLowerCase().replace(/\s+/g, "_");
+                                     const url = `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/integrations/incoming-webhook/${activeIntegration.id}/${formattedEvent}`;
+                                     return (
+                                        <div key={event} className="space-y-1">
+                                           <span className="text-[10px] font-bold text-zinc-400 block">{event}</span>
+                                           <div className="flex gap-1">
+                                              <input
+                                                 type="text"
+                                                 readOnly
+                                                 value={url}
+                                                 className="flex-1 bg-zinc-50 dark:bg-zinc-800 font-mono text-[9px] border rounded px-2 py-1 select-all focus:outline-none"
+                                              />
+                                              <button
+                                                 type="button"
+                                                 onClick={() => {
+                                                    navigator.clipboard.writeText(url);
+                                                    alert(`${event} Webhook URL copied!`);
+                                                 }}
+                                                 className="p-1 border rounded hover:bg-zinc-50 dark:hover:bg-zinc-800 text-zinc-500"
+                                              >
+                                                 <Copy className="h-3.5 w-3.5" />
+                                              </button>
+                                           </div>
+                                        </div>
+                                     );
+                                  })}
+                               </div>
+                            </div>
+                         ) : (
+                            /* Manual Trigger Import Form if API mode */
+                            <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5 space-y-4 shadow-sm">
+                               <h3 className="text-xs font-bold">Trigger Manual Sync Run</h3>
+                               
+                               <div className="space-y-3.5 text-xs">
+                                  <div>
+                                     <label className="text-[10px] font-bold text-zinc-400 block mb-1">Target Registry</label>
+                                     <select
+                                        value={syncTarget}
+                                        onChange={(e) => setSyncTarget(e.target.value)}
+                                        className="w-full text-xs border rounded p-2 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700"
+                                     >
+                                        <option value="customers">Customers</option>
+                                        <option value="employees">Employees</option>
+                                        <option value="attendance">Attendance Records</option>
+                                     </select>
+                                  </div>
+
+                                  {workflows.length > 0 && (
+                                     <div>
+                                        <label className="text-[10px] font-bold text-zinc-400 block mb-1">Trigger n8n Workflow</label>
+                                        <select
+                                           value={selectedWorkflow}
+                                           onChange={(e) => setSelectedWorkflow(e.target.value)}
+                                           className="w-full text-xs border rounded p-2 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700"
+                                        >
+                                           <option value="">Default Workflow (Auto-detected)</option>
+                                           {workflows.map((w) => (
+                                              <option key={w.id} value={w.id}>
+                                                 {w.name} {w.active ? "(Active)" : "(Inactive)"}
+                                              </option>
+                                           ))}
+                                        </select>
+                                     </div>
+                                  )}
+
+                                  <div>
+                                     <label className="text-[10px] font-bold text-zinc-400 block mb-1">Duplicate Strategy</label>
+                                     <div className="space-y-1.5 mt-1">
+                                        <label className="flex items-center gap-2 cursor-pointer">
+                                           <input
+                                              type="radio"
+                                              name="dupStrategy"
+                                              value="skip"
+                                              checked={syncStrategy === "skip"}
+                                              onChange={() => setSyncStrategy("skip")}
+                                           />
+                                           <span>Skip Existing Records</span>
+                                        </label>
+                                        <label className="flex items-center gap-2 cursor-pointer">
+                                           <input
+                                              type="radio"
+                                              name="dupStrategy"
+                                              value="overwrite"
+                                              checked={syncStrategy === "overwrite"}
+                                              onChange={() => setSyncStrategy("overwrite")}
+                                           />
+                                           <span>Overwrite & Update Original</span>
+                                        </label>
+                                     </div>
+                                  </div>
+                               </div>
+
+                               <div className="pt-2">
+                                  <button
+                                     type="button"
+                                     disabled={syncingData}
+                                     onClick={() => handleManualSync(activeIntegration.id)}
+                                     className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-zinc-900 text-white dark:bg-white dark:text-black font-semibold text-xs rounded-lg transition-colors disabled:opacity-50"
+                                  >
+                                     {syncingData ? (
+                                        <>
+                                           <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                           Processing...
+                                        </>
+                                     ) : (
+                                        <>
+                                           <Play className="h-3.5 w-3.5" />
+                                           Execute Import Job
+                                        </>
+                                     )}
+                                  </button>
+                               </div>
+                            </div>
+                         )}
+                      </div>
+
+                      {/* Right Sidebar: Sync Execution Audit Logs */}
+                      <div className="lg:col-span-2 space-y-6">
+                         <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5 space-y-4 shadow-sm">
+                            <div className="flex justify-between items-center border-b border-zinc-200 dark:border-zinc-800 pb-3">
+                               <div>
+                                  <h3 className="text-xs font-bold">Sync Execution Audit Trail</h3>
+                                  <p className="text-[10px] text-zinc-400 mt-0.5">Complete history of runs with one-click rollback logs.</p>
+                               </div>
+                               <button
+                                  type="button"
+                                  onClick={() => loadSyncHistory(activeIntegration.id)}
+                                  className="p-1 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+                                  title="Refresh logs"
+                                >
+                                   <RefreshCw className="h-3.5 w-3.5" />
+                               </button>
+                            </div>
+
+                            {syncHistory.length === 0 ? (
+                               <div className="p-12 text-center text-xs text-zinc-400">
+                                  No integration runs recorded yet.
+                               </div>
+                            ) : (
+                               <div className="overflow-x-auto">
+                                  <table className="w-full text-left border-collapse text-xs">
+                                     <thead>
+                                        <tr className="border-b border-zinc-200 dark:border-zinc-800 text-[10px] font-bold text-zinc-400 uppercase">
+                                           <th className="py-2.5">Date / Time</th>
+                                           <th className="py-2.5">Target</th>
+                                           <th className="py-2.5">Processed</th>
+                                           <th className="py-2.5">Status</th>
+                                           <th className="py-2.5 text-right">Action</th>
+                                        </tr>
+                                     </thead>
+                                     <tbody className="divide-y divide-zinc-150 dark:divide-zinc-800">
+                                        {syncHistory.map((run) => {
+                                           const isSuccess = run.status === "success";
+                                           const isRolledBack = run.status === "rolled_back";
+                                           return (
+                                              <tr key={run.id} className="hover:bg-zinc-50/50 dark:hover:bg-zinc-800/20">
+                                                 <td className="py-3 font-mono text-[10px] text-zinc-400">
+                                                    {new Date(run.started_at).toLocaleString()}
+                                                 </td>
+                                                 <td className="py-3 font-semibold capitalize">
+                                                    {run.target_type}
+                                                 </td>
+                                                 <td className="py-3">
+                                                    {run.status === "failed" ? (
+                                                       <span className="text-[10px] text-red-500 block max-w-xs truncate" title={run.error_message}>
+                                                          Err: {run.error_message || "Execution failed"}
+                                                       </span>
+                                                    ) : (
+                                                       <div className="text-[10px] text-zinc-500 space-x-1">
+                                                          <span>Processed: {run.records_processed}</span>
+                                                          <span>|</span>
+                                                          <span className="text-emerald-600 font-semibold">Created: {run.records_created}</span>
+                                                          <span>|</span>
+                                                          <span className="text-blue-600 font-semibold">Updated: {run.records_updated}</span>
+                                                       </div>
+                                                    )}
+                                                 </td>
+                                                 <td className="py-3">
+                                                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                                                       isSuccess
+                                                          ? "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/20 dark:text-emerald-400"
+                                                          : isRolledBack
+                                                          ? "bg-zinc-105 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400"
+                                                          : run.status === "failed"
+                                                          ? "bg-red-50 text-red-800 dark:bg-red-950/20 dark:text-red-400"
+                                                          : "bg-amber-50 text-amber-800 dark:bg-amber-950/20 dark:text-amber-400"
+                                                    }`}>
+                                                       {run.status.toUpperCase()}
+                                                    </span>
+                                                 </td>
+                                                 <td className="py-3 text-right">
+                                                    {isSuccess && (
+                                                       <button
+                                                          type="button"
+                                                          onClick={() => handleRollback(run.id, activeIntegration.id)}
+                                                          className="inline-flex items-center gap-1 px-2 py-1 border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-850 rounded text-[10px] font-semibold text-zinc-650 dark:text-zinc-300 transition-colors"
+                                                       >
+                                                          <Undo2 className="h-3 w-3" />
+                                                          Rollback
+                                                       </button>
+                                                    )}
+                                                 </td>
+                                              </tr>
+                                           );
+                                        })}
+                                     </tbody>
+                                  </table>
+                               </div>
+                            )}
+                         </div>
+                      </div>
+
+                   </div>
+                )}
+             </div>
           )}
 
         </div>
