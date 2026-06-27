@@ -108,7 +108,7 @@ class UserInviteRequest(BaseModel):
 class UserResponse(BaseModel):
     id: str
     tenant_id: Optional[str] = None
-    clerk_user_id: str
+    clerk_user_id: Optional[str] = None
     email: str
     first_name: Optional[str] = None
     last_name: Optional[str] = None
@@ -121,12 +121,32 @@ class UserAssignOrgRequest(BaseModel):
     tenant_id: Optional[str] = None
     role: str
 
+class UserUpdateRequest(BaseModel):
+    email: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    role: Optional[str] = None
+    status: Optional[str] = None
+    password: Optional[str] = None
+
 # --- AUTH / REDIRECT SCHEMAS ---
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+class LoginResponse(BaseModel):
+    token: str
+    user_id: str
+    email: str
+    role: str
+    org_id: Optional[str] = None
+    is_platform_admin: bool = False
 
 class AuthMeResponse(BaseModel):
     """Returned by POST /auth/me — tells the frontend where to redirect."""
     user_id: str           # TiDB internal UUID
-    clerk_user_id: str
+    clerk_user_id: Optional[str] = None
     email: str
     role: str              # platform_admin | org:admin | org:member | etc.
     org_id: Optional[str] = None    # TiDB Organization.id (not Clerk org ID)

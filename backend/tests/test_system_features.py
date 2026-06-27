@@ -533,3 +533,82 @@ async def test_invitations_lifecycle_flow(client, db_session):
         app.dependency_overrides.clear()
 
 
+@pytest.mark.asyncio
+async def test_local_user_updates_and_deletion(client, db_session):
+    """
+    Test updating and deleting user accounts locally (platform admin functionality).
+    """
+    # 1. Create a user to test updates and delete on
+    target_user = User(
+        clerk_user_id="user_target_999",
+        email="target_user@test.com",
+        first_name="Target",
+        last_name="User",
+        role="org:member",
+        status="active"
+    )
+    db_session.add(target_user)
+    await db_session.commit()
+    await db_session.refresh(target_user)
+
+    # 2. Mock a platform admin session
+    async def mock_platform_admin_auth():
+        return UserSession(
+            user_id="usr_admin_111",
+            email="admin@test.com",
+            tenant_id=None,
+            role="platform_admin"
+        )
+
+    # We also need an admin user in the database with role 'platform_admin' and clerk_user_id matching user_id
+    admin_user = User(
+        clerk_user_id="usr_admin_111",
+        email="admin@test.com",
+        first_name="Platform",
+        last_name="Admin",
+        role="platform_admin",
+        status="active"
+    )
+    db_session.add(admin_user)
+    await db_session.commit()
+
+    app.dependency_overrides[require_auth] = mock_platform_admin_auth
+
+    try:
+        # 3. Perform patch update
+        update_payload = {
+            "first_name": "UpdatedTarget",
+            "last_name": "UpdatedUser",
+            "role": "org:admin",
+            "status": "suspended"
+        }
+        resp = await client.patch(f"/api/v1/system/users/{target_user.id}", json=update_payload)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["first_name"] == "UpdatedTarget"
+        assert data["last_name"] == "UpdatedUser"
+        assert data["role"] == "org:admin"
+        assert data["status"] == "suspended"
+
+        # Verify in DB
+        stmt = select(User).where(User.id == target_user.id)
+        res = await db_session.execute(stmt)
+        db_user = res.scalars().first()
+        assert db_user.first_name == "UpdatedTarget"
+        assert db_user.role == "org:admin"
+        assert db_user.status == "suspended"
+
+        # 4. Delete the user
+        del_resp = await client.delete(f"/api/v1/system/users/{target_user.id}")
+        assert del_resp.status_code == 200
+        assert del_resp.json()["status"] == "success"
+
+        # Verify deletion in DB
+        res2 = await db_session.execute(stmt)
+        assert res2.scalars().first() is None
+
+    finally:
+        app.dependency_overrides.clear()
+
+
+

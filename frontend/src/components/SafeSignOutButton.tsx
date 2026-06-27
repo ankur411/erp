@@ -39,8 +39,16 @@ function ClerkSignOutButton({ children, className, ...props }: SafeSignOutButton
 
 function MockSignOutButton({ children, className, ...props }: SafeSignOutButtonProps) {
   const router = useRouter();
+  
+  const handleSignOut = () => {
+    document.cookie = "auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax";
+    localStorage.removeItem("auth_token");
+    router.push("/sign-in");
+    router.refresh();
+  };
+
   return (
-    <button onClick={() => router.push("/sign-in")} className={className} {...props}>
+    <button onClick={handleSignOut} className={className} {...props}>
       {children}
     </button>
   );

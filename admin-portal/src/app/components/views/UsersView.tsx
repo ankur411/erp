@@ -17,6 +17,8 @@ import {
   Clock,
   Calendar,
   KeyRound,
+  Edit2,
+  Copy,
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useApi } from "@/lib/api";
@@ -39,15 +41,6 @@ interface Tenant {
   name: string;
 }
 
-interface SyncResult {
-  synced: number;
-  created: number;
-  updated: number;
-  skipped: number;
-  errors: number;
-  error_details: string[];
-}
-
 function RoleBadge({ role }: { role: string }) {
   const map: Record<string, { label: string; className: string }> = {
     platform_admin: {
@@ -61,12 +54,12 @@ function RoleBadge({ role }: { role: string }) {
     },
     "org:member": {
       label: "Member",
-      className: "bg-slate-800 text-slate-400 border border-slate-700/40",
+      className: "bg-slate-850 text-slate-400 border border-slate-700/40",
     },
   };
   const config = map[role] ?? {
     label: role.replace("org:", "").toUpperCase(),
-    className: "bg-slate-800 text-slate-400 border border-slate-700/40",
+    className: "bg-slate-850 text-slate-400 border border-slate-700/40",
   };
   return (
     <span
@@ -132,33 +125,35 @@ export default function UsersView() {
     message: string;
   } | null>(null);
 
-  const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
-  const [syncError, setSyncError] = useState<string | null>(null);
+  // For showing credentials of newly created user
+  const [newlyCreatedCreds, setNewlyCreatedCreds] = useState<{
+    email: string;
+    tempPass: string;
+  } | null>(null);
 
-  const [selectedUserForAssign, setSelectedUserForAssign] = useState<User | null>(null);
-  const [assignForm, setAssignForm] = useState({
+  // Edit user state
+  const [selectedUserForEdit, setSelectedUserForEdit] = useState<User | null>(null);
+  const [editForm, setEditForm] = useState({
+    email: "",
+    first_name: "",
+    last_name: "",
     tenant_id: "",
     role: "org:member",
+    status: "active",
+    password: "",
   });
-  const [assignStatus, setAssignStatus] = useState<{
+  const [editStatus, setEditStatus] = useState<{
     type: "success" | "error";
     message: string;
   } | null>(null);
 
-  const handleOpenAssignModal = (user: User) => {
-    setSelectedUserForAssign(user);
-    setAssignForm({
-      tenant_id: user.tenant_id || "",
-      role: user.role || "org:member",
-    });
-    setAssignStatus(null);
-  };
+  // Delete confirmation state
+  const [userToDelete, setUserToDelete] = useState<User | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Fetch live users
-  const {
-    data: users = [],
-    isLoading,
-  } = useQuery<User[]>({
+  const { data: users = [], isLoading, refetch } = useQuery<User[]>({
     queryKey: ["admin-users"],
     queryFn: async () => {
       const res = await authFetch("/api/v1/system/users");
@@ -167,37 +162,14 @@ export default function UsersView() {
     },
   });
 
-  // Fetch tenants for dropdown
+  // Fetch organizations list
   const { data: tenants = [] } = useQuery<Tenant[]>({
-    queryKey: ["admin-tenants-simple"],
+    queryKey: ["admin-tenants-list"],
     queryFn: async () => {
-      const res = await authFetch("/api/v1/system/tenants");
-      if (!res.ok) throw new Error("Failed to fetch tenants");
-      return res.json();
-    },
-  });
-
-  // Sync users mutation
-  const syncMutation = useMutation({
-    mutationFn: async () => {
-      const res = await authFetch("/api/v1/system/admin/sync-clerk-users", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || "Sync failed");
-      }
-      return res.json() as Promise<SyncResult>;
-    },
-    onSuccess: (result) => {
-      setSyncResult(result);
-      setSyncError(null);
-      queryClient.invalidateQueries({ queryKey: ["admin-users"] });
-    },
-    onError: (err: Error) => {
-      setSyncError(err.message);
-      setSyncResult(null);
+      const res = await authFetch("/api/v1/system/organizations");
+      if (!res.ok) throw new Error("Failed to fetch organizations");
+      const data = await res.json();
+      return data.map((d: any) => ({ id: d.id, name: d.name }));
     },
   });
 
@@ -215,52 +187,94 @@ export default function UsersView() {
       }
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["admin-users"] });
-      setInviteStatus({
-        type: "success",
-        message: `Successfully invited ${inviteForm.email}! An invitation email has been sent.`,
+      setInviteStatus(null);
+      setNewlyCreatedCreds({
+        email: inviteForm.email,
+        tempPass: data.temp_password || "DefaultPass123!",
       });
+      // Reset form
       setInviteForm({ email: "", first_name: "", last_name: "", tenant_id: "", role: "org:member" });
-      setTimeout(() => {
-        setShowInviteModal(false);
-        setInviteStatus(null);
-      }, 3000);
     },
     onError: (err: Error) => {
       setInviteStatus({ type: "error", message: err.message });
     },
   });
 
-  // Assign organization mutation
-  const assignMutation = useMutation({
-    mutationFn: async ({ userId, tenant_id, role }: { userId: string; tenant_id: string; role: string }) => {
-      const res = await authFetch(`/api/v1/system/users/${userId}/assign-organization`, {
-        method: "POST",
+  // Edit/Update user mutation
+  const updateMutation = useMutation({
+    mutationFn: async (payload: typeof editForm) => {
+      const res = await authFetch(`/api/v1/system/users/${selectedUserForEdit?.id}`, {
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tenant_id: tenant_id || null, role }),
+        body: JSON.stringify({
+          email: payload.email,
+          first_name: payload.first_name,
+          last_name: payload.last_name,
+          role: payload.role,
+          status: payload.status,
+          password: payload.password || undefined,
+        }),
       });
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.detail || "Failed to update user");
+      }
+
+      // Also assign organization if role is not platform_admin
+      const assignRes = await authFetch(`/api/v1/system/users/${selectedUserForEdit?.id}/assign-organization`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tenant_id: payload.role === "platform_admin" ? null : payload.tenant_id || null,
+          role: payload.role,
+        }),
+      });
+      if (!assignRes.ok) {
+        const errorData = await assignRes.json().catch(() => ({}));
         throw new Error(errorData.detail || "Failed to assign organization");
       }
+
       return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin-users"] });
-      setAssignStatus({
+      setEditStatus({
         type: "success",
-        message: "Organization and role updated successfully!",
+        message: "User account updated successfully!",
       });
       setTimeout(() => {
-        setSelectedUserForAssign(null);
-        setAssignStatus(null);
-      }, 2000);
+        setSelectedUserForEdit(null);
+        setEditStatus(null);
+      }, 1500);
     },
     onError: (err: Error) => {
-      setAssignStatus({ type: "error", message: err.message });
+      setEditStatus({ type: "error", message: err.message });
     },
   });
+
+  // Delete user mutation
+  const handleDeleteUser = async () => {
+    if (!userToDelete) return;
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      const res = await authFetch(`/api/v1/system/users/${userToDelete.id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.detail || "Failed to delete user");
+      }
+      queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+      setUserToDelete(null);
+    } catch (err: any) {
+      setDeleteError(err.message || "Failed to delete user");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const handleInviteSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -276,15 +290,51 @@ export default function UsersView() {
     inviteMutation.mutate(inviteForm);
   };
 
+  const handleEditSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editForm.email.trim() || !editForm.role) return;
+    if (editForm.role !== "platform_admin" && !editForm.tenant_id) {
+      setEditStatus({
+        type: "error",
+        message: "Please select an organization for this user role.",
+      });
+      return;
+    }
+    setEditStatus(null);
+    updateMutation.mutate(editForm);
+  };
+
+  const handleOpenEditModal = (user: User) => {
+    setSelectedUserForEdit(user);
+    setEditForm({
+      email: user.email,
+      first_name: user.first_name || "",
+      last_name: user.last_name || "",
+      tenant_id: user.tenant_id || "",
+      role: user.role || "org:member",
+      status: user.status || "active",
+      password: "",
+    });
+  };
+
   const filteredUsers = users.filter((user) => {
     const matchesSearch =
       user.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
       `${user.first_name || ""} ${user.last_name || ""}`.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      user.clerk_user_id.toLowerCase().includes(searchQuery.toLowerCase());
+      (user.clerk_user_id || "").toLowerCase().includes(searchQuery.toLowerCase());
     const matchesRole = roleFilter === "all" || user.role === roleFilter;
     const matchesTenant = tenantFilter === "all" || user.tenant_id === tenantFilter;
     return matchesSearch && matchesRole && matchesTenant;
   });
+
+  const [copied, setCopied] = useState(false);
+  const handleCopyCreds = () => {
+    if (!newlyCreatedCreds) return;
+    const text = `Email: ${newlyCreatedCreds.email}\nPassword: ${newlyCreatedCreds.tempPass}`;
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   return (
     <div className="space-y-6">
@@ -293,114 +343,63 @@ export default function UsersView() {
         <div>
           <h1 className="text-xl font-bold tracking-tight">Identity & Users Control</h1>
           <p className="text-xs text-slate-500 dark:text-slate-450 mt-0.5">
-            Synchronized with Clerk — view profiles, roles, and organization memberships across all tenants.
+            Manage local credential-based accounts, workspace assignments, and security roles.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Sync button */}
+          {/* Refresh button */}
           <button
-            id="sync-clerk-users-btn"
-            onClick={() => {
-              setSyncResult(null);
-              setSyncError(null);
-              syncMutation.mutate();
-            }}
-            disabled={syncMutation.isPending}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-800 hover:bg-slate-750 border border-slate-700 text-slate-200 rounded-xl text-xs font-bold transition-all disabled:opacity-60"
+            onClick={() => refetch()}
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-800 hover:bg-slate-750 border border-slate-700 text-slate-200 rounded-xl text-xs font-bold transition-all"
           >
-            <RefreshCw
-              className={`h-3.5 w-3.5 ${syncMutation.isPending ? "animate-spin" : ""}`}
-            />
-            <span>{syncMutation.isPending ? "Syncing…" : "Sync from Clerk"}</span>
+            <RefreshCw className="h-3.5 w-3.5" />
+            <span>Reload</span>
           </button>
           <button
-            onClick={() => setShowInviteModal(true)}
+            onClick={() => {
+              setNewlyCreatedCreds(null);
+              setInviteStatus(null);
+              setShowInviteModal(true);
+            }}
             className="flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-blue-500/10"
           >
             <Plus className="h-4 w-4" />
-            <span>Invite User</span>
+            <span>Create User</span>
           </button>
         </div>
       </div>
 
-      {/* Sync result banner */}
-      <AnimatePresence>
-        {syncResult && (
-          <motion.div
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            className="p-4 rounded-xl bg-emerald-950/30 border border-emerald-800/40 text-xs text-emerald-300 flex items-start gap-3"
-          >
-            <CheckCircle className="h-4 w-4 shrink-0 text-emerald-400 mt-0.5" />
-            <div className="space-y-0.5">
-              <p className="font-bold">Clerk sync complete</p>
-              <p>
-                {syncResult.synced} users synced —{" "}
-                <span className="text-emerald-200">{syncResult.created} created</span>,{" "}
-                {syncResult.updated} updated, {syncResult.skipped} skipped without org
-                {syncResult.errors > 0 && (
-                  <span className="text-amber-400">, {syncResult.errors} errors</span>
-                )}
-              </p>
-            </div>
-            <button
-              onClick={() => setSyncResult(null)}
-              className="ml-auto p-1 hover:bg-emerald-900/30 rounded"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </motion.div>
-        )}
-        {syncError && (
-          <motion.div
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            className="p-4 rounded-xl bg-red-950/30 border border-red-800/40 text-xs text-red-300 flex items-start gap-3"
-          >
-            <AlertCircle className="h-4 w-4 shrink-0 text-red-400 mt-0.5" />
-            <p><span className="font-bold">Sync failed:</span> {syncError}</p>
-            <button onClick={() => setSyncError(null)} className="ml-auto p-1 hover:bg-red-900/30 rounded">
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Filters */}
-      <div className="flex flex-col md:flex-row md:items-center gap-4 bg-white dark:bg-slate-900/60 backdrop-blur-sm border border-slate-200 dark:border-slate-850 p-4 rounded-2xl shadow-sm">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+      {/* Filters bar */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-900/40 border border-slate-850 p-3.5 rounded-2xl">
+        <div className="relative">
+          <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
           <input
             type="text"
-            placeholder="Search email, name, Clerk user ID…"
+            placeholder="Search email, name or ID..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full text-xs border border-slate-200 dark:border-slate-800 rounded-lg pl-9 pr-4 py-2 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-1 focus:ring-blue-600 transition-all placeholder-slate-400 dark:placeholder-slate-500"
+            className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 pl-9 pr-4 text-xs focus:outline-none focus:ring-1 focus:ring-blue-600 text-slate-200 font-semibold"
           />
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] font-bold text-slate-450 dark:text-slate-500 uppercase tracking-wider">Role:</span>
+        <div>
           <select
             value={roleFilter}
             onChange={(e) => setRoleFilter(e.target.value)}
-            className="text-xs border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1.5 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-1 focus:ring-blue-600 font-semibold"
+            className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-xs focus:outline-none focus:ring-1 focus:ring-blue-600 text-slate-200 font-semibold"
           >
-            <option value="all">All Roles</option>
+            <option value="all">All Security Roles</option>
             <option value="platform_admin">Platform Admin</option>
-            <option value="org:admin">Org Admin</option>
-            <option value="org:member">Org Member</option>
+            <option value="org:admin">Organization Admin</option>
+            <option value="org:member">Organization Member</option>
           </select>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] font-bold text-slate-450 dark:text-slate-500 uppercase tracking-wider">Workspace:</span>
+        <div>
           <select
             value={tenantFilter}
             onChange={(e) => setTenantFilter(e.target.value)}
-            className="text-xs border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1.5 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-1 focus:ring-blue-600 font-semibold"
+            className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-xs focus:outline-none focus:ring-1 focus:ring-blue-600 text-slate-200 font-semibold"
           >
-            <option value="all">All Workspaces</option>
+            <option value="all">All Organizations</option>
             {tenants.map((t) => (
               <option key={t.id} value={t.id}>{t.name}</option>
             ))}
@@ -418,7 +417,7 @@ export default function UsersView() {
           <div className="p-12 text-center space-y-3">
             <Users className="h-8 w-8 text-slate-600 mx-auto" />
             <p className="text-xs text-slate-450">
-              No users found. Click <strong>Sync from Clerk</strong> to import all Clerk users.
+              No users found. Click <strong>Create User</strong> to add a new account.
             </p>
           </div>
         ) : (
@@ -428,11 +427,7 @@ export default function UsersView() {
                 <tr className="border-b border-slate-250 dark:border-slate-850 bg-slate-50/50 dark:bg-slate-900/50 text-[10px] font-bold uppercase tracking-wider text-slate-450 dark:text-slate-500">
                   <th className="px-5 py-3.5">User</th>
                   <th className="px-5 py-3.5">Email</th>
-                  <th className="px-5 py-3.5">
-                    <div className="flex items-center gap-1">
-                      <KeyRound className="h-3 w-3" /> Clerk ID
-                    </div>
-                  </th>
+                  <th className="px-5 py-3.5">User ID</th>
                   <th className="px-5 py-3.5">Organization</th>
                   <th className="px-5 py-3.5">
                     <div className="flex items-center gap-1">
@@ -486,10 +481,10 @@ export default function UsersView() {
                         {user.email}
                       </td>
 
-                      {/* Clerk User ID */}
+                      {/* User ID */}
                       <td className="px-5 py-3.5">
                         <span className="font-mono text-[9px] text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">
-                          {user.clerk_user_id}
+                          {user.id}
                         </span>
                       </td>
 
@@ -522,12 +517,23 @@ export default function UsersView() {
                       </td>
 
                       {/* Actions */}
-                      <td className="px-5 py-3.5 text-right whitespace-nowrap">
+                      <td className="px-5 py-3.5 text-right whitespace-nowrap space-x-1.5">
                         <button
-                          onClick={() => handleOpenAssignModal(user)}
-                          className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg text-[11px] font-bold transition-all border border-slate-200 dark:border-slate-750"
+                          onClick={() => handleOpenEditModal(user)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg text-[11px] font-bold transition-all border border-slate-200 dark:border-slate-750"
                         >
-                          Change Org
+                          <Edit2 className="h-3 w-3" />
+                          <span>Edit</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            setDeleteError(null);
+                            setUserToDelete(user);
+                          }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 bg-red-500/10 hover:bg-red-500/20 text-red-650 dark:text-red-400 rounded-lg text-[11px] font-bold transition-all border border-red-500/20"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                          <span>Delete</span>
                         </button>
                       </td>
                     </tr>
@@ -539,7 +545,7 @@ export default function UsersView() {
         )}
       </div>
 
-      {/* Invite Modal */}
+      {/* Invite/Create Modal */}
       <AnimatePresence>
         {showInviteModal && (
           <>
@@ -561,7 +567,7 @@ export default function UsersView() {
               <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-850 pb-3">
                 <div className="flex items-center gap-2">
                   <Mail className="h-5 w-5 text-blue-600" />
-                  <span className="font-bold text-sm">Send Platform Invitation</span>
+                  <span className="font-bold text-sm">Create New Platform User</span>
                 </div>
                 <button
                   onClick={() => setShowInviteModal(false)}
@@ -588,17 +594,197 @@ export default function UsersView() {
                 </div>
               )}
 
-              <form onSubmit={handleInviteSubmit} className="space-y-4 text-xs">
+              {newlyCreatedCreds ? (
+                <div className="space-y-4 text-xs bg-emerald-50/50 dark:bg-emerald-950/10 border border-emerald-250 dark:border-emerald-900/30 p-4 rounded-xl">
+                  <div className="flex items-center gap-2 text-emerald-600 font-bold mb-1">
+                    <CheckCircle className="h-4 w-4" />
+                    <span>User Account Created Successfully!</span>
+                  </div>
+                  <p className="text-slate-650 dark:text-slate-400">
+                    A local credential account has been initialized. Please share these credentials securely with the user.
+                  </p>
+                  <div className="bg-white dark:bg-slate-950 p-3 rounded-lg border border-slate-200 dark:border-slate-800 space-y-1.5 font-mono text-[11px] relative">
+                    <div><span className="text-slate-400">Email:</span> <span className="font-bold text-slate-850 dark:text-slate-200">{newlyCreatedCreds.email}</span></div>
+                    <div><span className="text-slate-400">Password:</span> <span className="font-bold text-slate-850 dark:text-slate-200">{newlyCreatedCreds.tempPass}</span></div>
+                    <button
+                      onClick={handleCopyCreds}
+                      className="absolute right-2 top-2 p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded border border-slate-200 dark:border-slate-800 text-slate-500"
+                      title="Copy credentials"
+                    >
+                      {copied ? <span className="text-[10px] text-emerald-500 font-bold">Copied!</span> : <Copy className="h-3.5 w-3.5" />}
+                    </button>
+                  </div>
+                  <div className="flex justify-end pt-2">
+                    <button
+                      onClick={() => {
+                        setNewlyCreatedCreds(null);
+                        setShowInviteModal(false);
+                      }}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <form onSubmit={handleInviteSubmit} className="space-y-4 text-xs">
+                  <div className="space-y-1.5">
+                    <label className="font-semibold text-slate-650 dark:text-slate-400">
+                      Email Address
+                    </label>
+                    <input
+                      type="email"
+                      required
+                      value={inviteForm.email}
+                      onChange={(e) => setInviteForm({ ...inviteForm, email: e.target.value })}
+                      placeholder="name@company.com"
+                      className="w-full border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-1 focus:ring-blue-600 font-semibold"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="font-semibold text-slate-650 dark:text-slate-400">First Name</label>
+                      <input
+                        type="text"
+                        value={inviteForm.first_name}
+                        onChange={(e) => setInviteForm({ ...inviteForm, first_name: e.target.value })}
+                        placeholder="Amit"
+                        className="w-full border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-1 focus:ring-blue-600 font-semibold"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="font-semibold text-slate-650 dark:text-slate-400">Last Name</label>
+                      <input
+                        type="text"
+                        value={inviteForm.last_name}
+                        onChange={(e) => setInviteForm({ ...inviteForm, last_name: e.target.value })}
+                        placeholder="Kumar"
+                        className="w-full border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-1 focus:ring-blue-600 font-semibold"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="font-semibold text-slate-650 dark:text-slate-400">Security Role</label>
+                    <select
+                      value={inviteForm.role}
+                      onChange={(e) =>
+                        setInviteForm({
+                          ...inviteForm,
+                          role: e.target.value,
+                          tenant_id:
+                            e.target.value === "platform_admin"
+                              ? "system"
+                              : inviteForm.tenant_id,
+                        })
+                      }
+                      className="w-full border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-1 focus:ring-blue-600 font-semibold"
+                    >
+                      <option value="org:member">Organization Member</option>
+                      <option value="org:admin">Organization Admin</option>
+                      <option value="platform_admin">Platform Admin</option>
+                    </select>
+                  </div>
+
+                  {inviteForm.role !== "platform_admin" && (
+                    <div className="space-y-1.5">
+                      <label className="font-semibold text-slate-650 dark:text-slate-400">Target Workspace</label>
+                      <select
+                        required
+                        value={inviteForm.tenant_id}
+                        onChange={(e) => setInviteForm({ ...inviteForm, tenant_id: e.target.value })}
+                        className="w-full border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-1 focus:ring-blue-600 font-semibold"
+                      >
+                        <option value="">— Select Organization —</option>
+                        {tenants.map((t) => (
+                          <option key={t.id} value={t.id}>{t.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-850">
+                    <button
+                      type="button"
+                      disabled={inviteMutation.isPending}
+                      onClick={() => setShowInviteModal(false)}
+                      className="px-4 py-2 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 rounded-xl font-bold"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={inviteMutation.isPending}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold transition-all shadow-md shadow-blue-500/10 flex items-center gap-1.5"
+                    >
+                      {inviteMutation.isPending ? "Creating…" : "Create User"}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Edit User Modal */}
+      <AnimatePresence>
+        {selectedUserForEdit && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.5 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                if (!updateMutation.isPending) setSelectedUserForEdit(null);
+              }}
+              className="fixed inset-0 z-40 bg-black"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-xl z-50 space-y-4"
+            >
+              <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-850 pb-3">
+                <div className="flex items-center gap-2">
+                  <Edit2 className="h-5 w-5 text-blue-600" />
+                  <span className="font-bold text-sm">Edit User Account</span>
+                </div>
+                <button
+                  onClick={() => setSelectedUserForEdit(null)}
+                  className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              {editStatus && (
+                <div
+                  className={`p-3 rounded-xl border flex items-start gap-2 text-xs leading-normal ${
+                    editStatus.type === "success"
+                      ? "bg-emerald-50 border-emerald-200 text-emerald-850 dark:bg-emerald-950/20 dark:border-emerald-900/30 dark:text-emerald-400"
+                      : "bg-red-50 border-red-200 text-red-850 dark:bg-red-950/20 dark:border-red-900/30 dark:text-red-400"
+                  }`}
+                >
+                  {editStatus.type === "success" ? (
+                    <CheckCircle className="h-4 w-4 shrink-0 mt-0.5 text-emerald-600" />
+                  ) : (
+                    <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-red-650" />
+                  )}
+                  <span>{editStatus.message}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleEditSubmit} className="space-y-4 text-xs">
                 <div className="space-y-1.5">
-                  <label className="font-semibold text-slate-650 dark:text-slate-400">
-                    Recipient Email Address
-                  </label>
+                  <label className="font-semibold text-slate-650 dark:text-slate-400">Email Address</label>
                   <input
                     type="email"
                     required
-                    value={inviteForm.email}
-                    onChange={(e) => setInviteForm({ ...inviteForm, email: e.target.value })}
-                    placeholder="name@company.com"
+                    value={editForm.email}
+                    onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
                     className="w-full border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-1 focus:ring-blue-600 font-semibold"
                   />
                 </div>
@@ -608,9 +794,8 @@ export default function UsersView() {
                     <label className="font-semibold text-slate-650 dark:text-slate-400">First Name</label>
                     <input
                       type="text"
-                      value={inviteForm.first_name}
-                      onChange={(e) => setInviteForm({ ...inviteForm, first_name: e.target.value })}
-                      placeholder="Amit"
+                      value={editForm.first_name}
+                      onChange={(e) => setEditForm({ ...editForm, first_name: e.target.value })}
                       className="w-full border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-1 focus:ring-blue-600 font-semibold"
                     />
                   </div>
@@ -618,46 +803,48 @@ export default function UsersView() {
                     <label className="font-semibold text-slate-650 dark:text-slate-400">Last Name</label>
                     <input
                       type="text"
-                      value={inviteForm.last_name}
-                      onChange={(e) => setInviteForm({ ...inviteForm, last_name: e.target.value })}
-                      placeholder="Kumar"
+                      value={editForm.last_name}
+                      onChange={(e) => setEditForm({ ...editForm, last_name: e.target.value })}
                       className="w-full border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-1 focus:ring-blue-600 font-semibold"
                     />
                   </div>
                 </div>
 
-                <div className="space-y-1.5">
-                  <label className="font-semibold text-slate-650 dark:text-slate-400">Security Role</label>
-                  <select
-                    value={inviteForm.role}
-                    onChange={(e) =>
-                      setInviteForm({
-                        ...inviteForm,
-                        role: e.target.value,
-                        tenant_id:
-                          e.target.value === "platform_admin"
-                            ? "system"
-                            : inviteForm.tenant_id,
-                      })
-                    }
-                    className="w-full border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-1 focus:ring-blue-600 font-semibold"
-                  >
-                    <option value="org:member">Organization Member</option>
-                    <option value="org:admin">Organization Admin</option>
-                    <option value="platform_admin">Platform Admin</option>
-                  </select>
-                </div>
-
-                {inviteForm.role !== "platform_admin" && (
+                <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1.5">
-                    <label className="font-semibold text-slate-650 dark:text-slate-400">Target Workspace</label>
+                    <label className="font-semibold text-slate-650 dark:text-slate-400">Security Role</label>
                     <select
-                      required
-                      value={inviteForm.tenant_id}
-                      onChange={(e) => setInviteForm({ ...inviteForm, tenant_id: e.target.value })}
+                      value={editForm.role}
+                      onChange={(e) => setEditForm({ ...editForm, role: e.target.value })}
                       className="w-full border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-1 focus:ring-blue-600 font-semibold"
                     >
-                      <option value="">— Select Organization —</option>
+                      <option value="org:member">Organization Member</option>
+                      <option value="org:admin">Organization Admin</option>
+                      <option value="platform_admin">Platform Admin</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="font-semibold text-slate-650 dark:text-slate-400">Status</label>
+                    <select
+                      value={editForm.status}
+                      onChange={(e) => setEditForm({ ...editForm, status: e.target.value })}
+                      className="w-full border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-1 focus:ring-blue-600 font-semibold"
+                    >
+                      <option value="active">Active</option>
+                      <option value="suspended">Suspended</option>
+                    </select>
+                  </div>
+                </div>
+
+                {editForm.role !== "platform_admin" && (
+                  <div className="space-y-1.5">
+                    <label className="font-semibold text-slate-650 dark:text-slate-400">Target Workspace / Organization</label>
+                    <select
+                      value={editForm.tenant_id}
+                      onChange={(e) => setEditForm({ ...editForm, tenant_id: e.target.value })}
+                      className="w-full border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-1 focus:ring-blue-600 font-semibold"
+                    >
+                      <option value="">— Unassigned (No Organization) —</option>
                       {tenants.map((t) => (
                         <option key={t.id} value={t.id}>{t.name}</option>
                       ))}
@@ -665,21 +852,34 @@ export default function UsersView() {
                   </div>
                 )}
 
+                <div className="space-y-1.5">
+                  <label className="font-semibold text-slate-650 dark:text-slate-400">
+                    Reset Password <span className="text-slate-400 font-normal">(Leave blank to keep current)</span>
+                  </label>
+                  <input
+                    type="password"
+                    value={editForm.password}
+                    onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
+                    placeholder="New password"
+                    className="w-full border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-1 focus:ring-blue-600 font-semibold"
+                  />
+                </div>
+
                 <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-850">
                   <button
                     type="button"
-                    disabled={inviteMutation.isPending}
-                    onClick={() => setShowInviteModal(false)}
+                    disabled={updateMutation.isPending}
+                    onClick={() => setSelectedUserForEdit(null)}
                     className="px-4 py-2 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 rounded-xl font-bold"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    disabled={inviteMutation.isPending}
+                    disabled={updateMutation.isPending}
                     className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold transition-all shadow-md shadow-blue-500/10 flex items-center gap-1.5"
                   >
-                    {inviteMutation.isPending ? "Inviting…" : "Send Invitation"}
+                    {updateMutation.isPending ? "Saving…" : "Save Changes"}
                   </button>
                 </div>
               </form>
@@ -688,16 +888,16 @@ export default function UsersView() {
         )}
       </AnimatePresence>
 
-      {/* Assign Organization Modal */}
+      {/* Delete Confirmation Modal */}
       <AnimatePresence>
-        {selectedUserForAssign && (
+        {userToDelete && (
           <>
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 0.5 }}
               exit={{ opacity: 0 }}
               onClick={() => {
-                if (!assignMutation.isPending) setSelectedUserForAssign(null);
+                if (!isDeleting) setUserToDelete(null);
               }}
               className="fixed inset-0 z-40 bg-black"
             />
@@ -705,99 +905,42 @@ export default function UsersView() {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-880 rounded-2xl p-6 shadow-xl z-50 space-y-4"
+              className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-xl z-50 space-y-4"
             >
-              <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-850 pb-3">
-                <div className="flex items-center gap-2">
-                  <Building className="h-5 w-5 text-blue-600" />
-                  <span className="font-bold text-sm">Assign Organization & Role</span>
-                </div>
-                <button
-                  onClick={() => setSelectedUserForAssign(null)}
-                  className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded"
-                >
-                  <X className="h-4 w-4" />
-                </button>
+              <div className="flex items-center gap-3 text-red-650 dark:text-red-400">
+                <Trash2 className="h-6 w-6 shrink-0" />
+                <span className="font-bold text-sm">Delete User Account?</span>
               </div>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Are you sure you want to delete the user account for{" "}
+                <strong>{userToDelete.email}</strong>? This action cannot be undone. 
+                They will lose all access to the system.
+              </p>
 
-              <div className="text-xs text-slate-500 bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-850 space-y-1">
-                <p><strong>User:</strong> {selectedUserForAssign.first_name ? `${selectedUserForAssign.first_name} ${selectedUserForAssign.last_name || ""}` : "—"}</p>
-                <p><strong>Email:</strong> {selectedUserForAssign.email}</p>
-              </div>
-
-              {assignStatus && (
-                <div
-                  className={`p-3 rounded-xl border flex items-start gap-2 text-xs leading-normal ${
-                    assignStatus.type === "success"
-                      ? "bg-emerald-50 border-emerald-200 text-emerald-850 dark:bg-emerald-950/20 dark:border-emerald-900/30 dark:text-emerald-400"
-                      : "bg-red-50 border-red-200 text-red-850 dark:bg-red-950/20 dark:border-red-900/30 dark:text-red-400"
-                  }`}
-                >
-                  {assignStatus.type === "success" ? (
-                    <CheckCircle className="h-4 w-4 shrink-0 mt-0.5 text-emerald-600" />
-                  ) : (
-                    <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-red-650" />
-                  )}
-                  <span>{assignStatus.message}</span>
+              {deleteError && (
+                <div className="p-3 rounded-xl border bg-red-50 border-red-200 text-red-850 dark:bg-red-950/20 dark:border-red-900/30 dark:text-red-400 flex items-start gap-2 text-xs leading-normal">
+                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <span>{deleteError}</span>
                 </div>
               )}
 
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  assignMutation.mutate({
-                    userId: selectedUserForAssign.id,
-                    tenant_id: assignForm.tenant_id,
-                    role: assignForm.role,
-                  });
-                }}
-                className="space-y-4 text-xs"
-              >
-                <div className="space-y-1.5">
-                  <label className="font-semibold text-slate-650 dark:text-slate-400">Target Workspace / Organization</label>
-                  <select
-                    value={assignForm.tenant_id}
-                    onChange={(e) => setAssignForm({ ...assignForm, tenant_id: e.target.value })}
-                    className="w-full border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-1 focus:ring-blue-600 font-semibold"
-                  >
-                    <option value="">— Unassigned (No Organization) —</option>
-                    {tenants.map((t) => (
-                      <option key={t.id} value={t.id}>{t.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="font-semibold text-slate-650 dark:text-slate-400">Security Role</label>
-                  <select
-                    value={assignForm.role}
-                    onChange={(e) => setAssignForm({ ...assignForm, role: e.target.value })}
-                    className="w-full border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-1 focus:ring-blue-600 font-semibold"
-                  >
-                    <option value="org:member">Organization Member</option>
-                    <option value="org:admin">Organization Admin</option>
-                    <option value="platform_admin">Platform Admin</option>
-                  </select>
-                </div>
-
-                <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-850">
-                  <button
-                    type="button"
-                    disabled={assignMutation.isPending}
-                    onClick={() => setSelectedUserForAssign(null)}
-                    className="px-4 py-2 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 rounded-xl font-bold"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={assignMutation.isPending}
-                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold transition-all shadow-md shadow-blue-500/10 flex items-center gap-1.5"
-                  >
-                    {assignMutation.isPending ? "Saving…" : "Save Changes"}
-                  </button>
-                </div>
-              </form>
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-850">
+                <button
+                  type="button"
+                  disabled={isDeleting}
+                  onClick={() => setUserToDelete(null)}
+                  className="px-4 py-2 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 rounded-xl font-bold text-xs"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteUser}
+                  disabled={isDeleting}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold transition-all shadow-md shadow-red-500/10 text-xs"
+                >
+                  {isDeleting ? "Deleting…" : "Delete Account"}
+                </button>
+              </div>
             </motion.div>
           </>
         )}

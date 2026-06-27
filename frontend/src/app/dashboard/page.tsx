@@ -57,15 +57,18 @@ import { useERPStore, Supplier, Product, PurchaseOrder, Invoice, Payment } from 
 import { useAuth } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
 
+const isClerkConfigured = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+
 type TabType = "dashboard" | "suppliers" | "products" | "inventory" | "purchase" | "finance" | "tenant_control" | "integrations";
 
 export default function DashboardPage() {
-  const { isLoaded, orgId } = useAuth();
+  const clerkAuth = isClerkConfigured ? useAuth() : null;
+  const isLoaded = clerkAuth ? clerkAuth.isLoaded : true;
+  const orgId = clerkAuth ? clerkAuth.orgId : null;
   const router = useRouter();
 
   React.useEffect(() => {
-    const isClerkEnabled = typeof window !== "undefined" && (!!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY || window.location.hostname.includes("localhost"));
-    if (isClerkEnabled && isLoaded && !orgId) {
+    if (isClerkConfigured && isLoaded && !orgId) {
       router.push("/no-organization");
     }
   }, [isLoaded, orgId, router]);
@@ -518,7 +521,7 @@ export default function DashboardPage() {
               </div>
               <div>
                 <div className="text-xs font-semibold leading-none">Aarush Gupta</div>
-                <span className="text-[10px] text-zinc-400 uppercase tracking-wide font-medium">Clerk Auth Session</span>
+                <span className="text-[10px] text-zinc-400 uppercase tracking-wide font-medium">{isClerkConfigured ? "Clerk Auth Session" : "Local Auth Session"}</span>
               </div>
             </div>
             <button 

@@ -1,15 +1,70 @@
 "use client";
 
-import React from "react";
-import { SignIn } from "@clerk/nextjs";
+import React, { useState } from "react";
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import Link from "next/link";
+import { Mail, Lock, Loader2, Eye, EyeOff } from "lucide-react";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const ADMIN_PORTAL_URL = process.env.NEXT_PUBLIC_ADMIN_PORTAL_URL || "https://erp-admin-nine.vercel.app";
 
 export default function SignInPage() {
-  const isClerkEnabled = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  const router = useRouter();
+  
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`${API_URL}/api/v1/system/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email, password }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || "Invalid email or password");
+      }
+
+      const data = await response.json();
+      
+      // Store token in cookie (for middleware) and localStorage (for client-side)
+      document.cookie = `auth_token=${data.access_token}; path=/; max-age=86400; SameSite=Lax`;
+      localStorage.setItem("auth_token", data.access_token);
+      
+      // Redirect based on user role and organization status
+      if (data.user.is_platform_admin) {
+        window.location.href = ADMIN_PORTAL_URL;
+        return;
+      }
+
+      if (data.user.org_id) {
+        router.push("/dashboard");
+      } else {
+        router.push("/no-organization");
+      }
+      
+      router.refresh();
+    } catch (err: any) {
+      setError(err.message || "An unexpected error occurred");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
-    <div className="flex min-h-screen bg-slate-950 relative overflow-hidden">
+    <div className="flex min-h-screen bg-slate-950 relative overflow-hidden font-sans">
       {/* Left side — branding panel */}
       <motion.div
         initial={{ opacity: 0, x: -30 }}
@@ -111,43 +166,72 @@ export default function SignInPage() {
             </p>
           </div>
 
-          {isClerkEnabled ? (
-            <SignIn
-              forceRedirectUrl="/auth/callback"
-              appearance={{
-                elements: {
-                  card: "bg-slate-900/80 border border-slate-800 shadow-2xl shadow-black/50 backdrop-blur-sm",
-                  headerTitle: "text-white font-bold",
-                  headerSubtitle: "text-slate-400 text-xs",
-                  formButtonPrimary:
-                    "bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl py-3 shadow-lg shadow-blue-500/20 transition-all",
-                  socialButtonsBlockButton:
-                    "border border-slate-700 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white rounded-xl transition-all",
-                  formFieldInput:
-                    "bg-slate-800 border border-slate-700 text-white placeholder:text-slate-500 rounded-xl focus:border-blue-500 focus:ring-blue-500/20",
-                  formFieldLabel: "text-slate-300 text-xs font-semibold",
-                  dividerLine: "bg-slate-800",
-                  dividerText: "text-slate-600 text-xs",
-                  footerActionLink: "text-blue-400 hover:text-blue-300 font-semibold",
-                  identityPreviewText: "text-white",
-                  identityPreviewEditButton: "text-blue-400 hover:text-blue-300",
-                  otpCodeFieldInput: "bg-slate-800 border-slate-700 text-white",
-                },
-              }}
-            />
-          ) : (
-            <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 text-center space-y-3">
-              <div className="h-10 w-10 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mx-auto">
-                <span className="text-amber-400 text-lg">⚠</span>
+          {/* Form Card */}
+          <div className="bg-slate-900/80 border border-slate-800 shadow-2xl shadow-black/50 backdrop-blur-sm rounded-2xl p-8 space-y-6">
+            {error && (
+              <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-xs rounded-lg p-3 text-center">
+                {error}
               </div>
-              <p className="text-sm font-semibold text-slate-300">
-                Authentication Not Configured
-              </p>
-              <p className="text-xs text-slate-500">
-                Set <code className="text-blue-400">NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY</code> in your environment to enable sign-in.
-              </p>
-            </div>
-          )}
+            )}
+
+            <form onSubmit={handleLogin} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-300">Email Address</label>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+                    <Mail className="w-4 h-4" />
+                  </span>
+                  <input
+                    type="email"
+                    required
+                    placeholder="name@company.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full bg-slate-950/60 border border-slate-800 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl py-2.5 pl-10 pr-4 text-sm text-white placeholder-slate-600 transition-all duration-250 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-300">Password</label>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+                    <Lock className="w-4 h-4" />
+                  </span>
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    required
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full bg-slate-950/60 border border-slate-800 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl py-2.5 pl-10 pr-10 text-sm text-white placeholder-slate-600 transition-all duration-250 outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-500 hover:text-slate-300 transition-colors"
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-xl py-2.5 text-sm transition-all duration-250 flex items-center justify-center gap-2 cursor-pointer shadow-[0_4px_12px_rgba(37,99,235,0.2)] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Signing In...
+                  </>
+                ) : (
+                  "Sign In"
+                )}
+              </button>
+            </form>
+          </div>
         </div>
       </motion.div>
     </div>

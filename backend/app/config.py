@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     SENTRY_DSN: Optional[str] = None
     POSTHOG_API_KEY: Optional[str] = None
     POSTHOG_HOST: str = "https://us.i.posthog.com"
+    JWT_SECRET_KEY: str = "supersecret_change_me_in_production_key_12345"
 
     model_config = SettingsConfigDict(
         env_file=os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"),

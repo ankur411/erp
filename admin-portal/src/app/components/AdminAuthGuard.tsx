@@ -6,6 +6,7 @@ import { useAuth } from "@clerk/nextjs";
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const CLIENT_PORTAL_URL =
   process.env.NEXT_PUBLIC_CLIENT_PORTAL_URL || "https://erp-delta-hazel.vercel.app";
+const isClerkConfigured = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
 
 type GuardState = "checking" | "authorized" | "unauthorized" | "error";
 
@@ -14,35 +15,44 @@ type GuardState = "checking" | "authorized" | "unauthorized" | "error";
  *
  * Wraps the admin portal content. On mount, calls POST /auth/me to
  * verify the signed-in user has the platform_admin role in TiDB.
- *
- * - Checking  → shows a loading spinner
- * - Authorized → renders children (the admin dashboard)
- * - Unauthorized → redirects to the client portal
- * - Error (backend unreachable / not migrated) → shows bypass option
  */
 export default function AdminAuthGuard({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const { getToken, isLoaded, isSignedIn } = useAuth();
+  const clerkAuth = isClerkConfigured ? useAuth() : null;
   const [state, setGuardState] = useState<GuardState>("checking");
   const [errorMsg, setErrorMsg] = useState("");
   const checked = useRef(false);
 
   useEffect(() => {
-    if (!isLoaded || checked.current) return;
+    if (isClerkConfigured && clerkAuth && !clerkAuth.isLoaded) return;
+    if (checked.current) return;
     checked.current = true;
 
-    if (!isSignedIn) {
+    const localToken = typeof window !== "undefined"
+      ? (localStorage.getItem("auth_token") || document.cookie.match(/auth_token=([^;]+)/)?.[1] || null)
+      : null;
+
+    if (isClerkConfigured && clerkAuth && !clerkAuth.isSignedIn) {
+      window.location.href = "/sign-in";
+      return;
+    }
+
+    if (!isClerkConfigured && !localToken) {
       window.location.href = "/sign-in";
       return;
     }
 
     async function checkAdmin() {
       try {
-        const token = await getToken();
-        if (!token) {
+        let finalToken = localToken;
+        if (isClerkConfigured && clerkAuth) {
+          finalToken = await clerkAuth.getToken();
+        }
+
+        if (!finalToken) {
           window.location.href = "/sign-in";
           return;
         }
@@ -50,7 +60,7 @@ export default function AdminAuthGuard({
         const res = await fetch(`${API_URL}/api/v1/system/auth/me`, {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${token}`,
+            Authorization: `Bearer ${finalToken}`,
             "Content-Type": "application/json",
           },
         });
@@ -71,6 +81,13 @@ export default function AdminAuthGuard({
             `Backend /auth/me returned ${res.status}. The migration may not have run yet. Allowing access — role not verified.`
           );
           setGuardState("error");
+        } else if (res.status === 401) {
+          // Token is unauthorized or expired, clear it and redirect to login
+          if (!isClerkConfigured) {
+            document.cookie = "auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax";
+            localStorage.removeItem("auth_token");
+          }
+          window.location.href = "/sign-in";
         } else {
           setErrorMsg(`Backend error: ${res.status}`);
           setGuardState("error");
@@ -85,7 +102,7 @@ export default function AdminAuthGuard({
     }
 
     checkAdmin();
-  }, [isLoaded, isSignedIn, getToken]);
+  }, [clerkAuth?.isLoaded, clerkAuth?.isSignedIn]);
 
   // ── Loading ──────────────────────────────────────────────────────────────
   if (state === "checking") {

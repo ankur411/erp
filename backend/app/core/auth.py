@@ -14,35 +14,36 @@ from app.models.system import ApiKey
 security_scheme = HTTPBearer(auto_error=False)
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
-# InMemory cache for JWKS keys to avoid requesting Clerk on every request
-_jwks_cache: Dict = {}
+import secrets
+from datetime import timedelta
 
-def get_clerk_public_key(kid: str) -> str:
-    global _jwks_cache
-    if kid in _jwks_cache:
-        return _jwks_cache[kid]
-    
-    # Fetch JWKS from Clerk
+def hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    key = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
+    return f"{salt.hex()}:{key.hex()}"
+
+def verify_password(password: str, hashed: str) -> bool:
+    if not hashed or ":" not in hashed:
+        return False
     try:
-        response = requests.get(settings.CLERK_JWKS_URL, timeout=5)
-        response.raise_for_status()
-        jwks = response.json()
-        for key in jwks.get("keys", []):
-            if key.get("kid") == kid:
-                # Convert JWK to PEM format
-                public_key = jwt.algorithms.RSAAlgorithm.from_jwk(key)
-                _jwks_cache[kid] = public_key
-                return public_key
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch JWKS keys from Clerk: {str(e)}"
-        )
-        
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid token key identifier (kid)."
-    )
+        salt_hex, key_hex = hashed.split(":")
+        salt = bytes.fromhex(salt_hex)
+        key = bytes.fromhex(key_hex)
+        new_key = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
+        return secrets.compare_digest(key, new_key)
+    except Exception:
+        return False
+
+def create_access_token(user_id: str, email: str, org_id: Optional[str] = None, org_role: Optional[str] = None) -> str:
+    payload = {
+        "sub": user_id,
+        "email": email,
+        "org_id": org_id,
+        "org_role": org_role,
+        "exp": datetime.utcnow() + timedelta(days=7),
+        "iss": "supplier-erp-local-auth"
+    }
+    return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm="HS256")
 
 class UserSession:
     def __init__(self, user_id: str, email: str, tenant_id: Optional[str] = None, role: Optional[str] = None):
@@ -111,31 +112,12 @@ async def get_current_user(
             role="org:admin" # API keys bypass to org admin role
         )
 
-    # 3. Clerk JWT Authentication
+    # 3. HS256 JWT Local Authentication
     try:
-        # Get Key ID (kid) from token header
-        unverified_header = jwt.get_unverified_header(token)
-        kid = unverified_header.get("kid")
-        if not kid:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token header is missing key ID (kid)."
-            )
-        
-        # Get matching public key
-        public_key = get_clerk_public_key(kid)
-        
-        # Decode and verify token
-        options = {}
-        if not settings.CLERK_AUDIENCE:
-            options["verify_aud"] = False
-            
         payload = jwt.decode(
             token,
-            public_key,
-            algorithms=["RS256"],
-            audience=settings.CLERK_AUDIENCE or None,
-            options=options
+            settings.JWT_SECRET_KEY,
+            algorithms=["HS256"]
         )
         
         user_id = payload.get("sub")

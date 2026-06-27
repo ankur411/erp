@@ -16,7 +16,7 @@ class Organization(Base):
     slug: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     custom_domain: Mapped[Optional[str]] = mapped_column(String(255), unique=True, index=True, nullable=True)
     is_custom_domain: Mapped[bool] = mapped_column(default=False, nullable=False)
-    clerk_org_id: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    clerk_org_id: Mapped[Optional[str]] = mapped_column(String(255), unique=True, index=True, nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="active", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     access_config: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
@@ -28,7 +28,8 @@ class User(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
     tenant_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True)
-    clerk_user_id: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    clerk_user_id: Mapped[Optional[str]] = mapped_column(String(255), unique=True, index=True, nullable=True)
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     email: Mapped[str] = mapped_column(String(255), nullable=False)
     first_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     last_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)

@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import re
 from sqlalchemy import func
 from app.database import get_db, tenant_context
-from app.core.auth import require_auth, require_org, RequireRole, UserSession
+from app.core.auth import require_auth, require_org, RequireRole, UserSession, hash_password, verify_password, create_access_token
 from app.models.system import (
     Organization, User, Document, AuditLog, Plan, ApiKey,
     OrganizationRequest, OrganizationDepartment, OrganizationInvitation
@@ -23,11 +23,11 @@ from app.config import settings
 from app.core.storage import generate_presigned_upload_url, generate_presigned_download_url
 from app.modules.system.schemas import (
     DocumentCreate, PresignedUploadRequest, PresignedUploadResponse, DocumentResponse,
-    OrganizationAccessUpdate, OrganizationResponse, PlatformAnalyticsResponse, PlanCreate, PlanUpdate, PlanResponse, UserInviteRequest, UserResponse, UserAssignOrgRequest,
+    OrganizationAccessUpdate, OrganizationResponse, PlatformAnalyticsResponse, PlanCreate, PlanUpdate, PlanResponse, UserInviteRequest, UserResponse, UserAssignOrgRequest, UserUpdateRequest,
     PlatformHistoryResponse, PlatformHistoryDataPoint, AuditLogResponse,
     OrganizationRequestCreate, OrganizationRequestResponse, OrganizationRequestAction,
     DepartmentCreate, DepartmentResponse, InvitationCreate, InvitationResponse,
-    AuthMeResponse, ClerkSyncResult, MakeAdminRequest
+    AuthMeResponse, ClerkSyncResult, MakeAdminRequest, LoginRequest, LoginResponse
 )
 
 def slugify(text: str) -> str:
@@ -63,7 +63,9 @@ async def sync_profile(
     Client-side fallback profile sync. Invoked after login to ensure user 
     and organization records exist in local DB.
     """
-    org_stmt = select(Organization).where(Organization.clerk_org_id == current_user.tenant_id)
+    org_stmt = select(Organization).where(
+        (Organization.id == current_user.tenant_id) | (Organization.clerk_org_id == current_user.tenant_id)
+    )
     res = await db.execute(org_stmt)
     org = res.scalars().first()
 
@@ -82,7 +84,9 @@ async def sync_profile(
     # Set tenant context
     tenant_context.set(org.id)
 
-    user_stmt = select(User).where(User.clerk_user_id == current_user.user_id)
+    user_stmt = select(User).where(
+        (User.id == current_user.user_id) | (User.clerk_user_id == current_user.user_id)
+    )
     user_res = await db.execute(user_stmt)
     user = user_res.scalars().first()
 
@@ -108,63 +112,11 @@ async def sync_profile(
 
 # --- CLERK WEBHOOK ---
 @router.post("/webhooks/clerk", status_code=status.HTTP_200_OK)
-async def clerk_webhook(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    svix_id: Optional[str] = Header(None, alias="svix-id"),
-    svix_signature: Optional[str] = Header(None, alias="svix-signature"),
-    svix_timestamp: Optional[str] = Header(None, alias="svix-timestamp")
-):
+async def clerk_webhook(request: Request):
     """
-    Webhook handler for Clerk organization & user lifecycle events.
+    No-op webhook handler for Clerk organization & user lifecycle events.
     """
-    body = await request.body()
-    payload = json.loads(body)
-    
-    event_type = payload.get("type")
-    data = payload.get("data", {})
-    
-    if event_type == "organization.created" or event_type == "organization.updated":
-        clerk_org_id = data.get("id")
-        name = data.get("name")
-        
-        stmt = select(Organization).where(Organization.clerk_org_id == clerk_org_id)
-        res = await db.execute(stmt)
-        org = res.scalars().first()
-        
-        if not org:
-            slug = await get_unique_slug(db, name)
-            org = Organization(
-                clerk_org_id=clerk_org_id,
-                name=name,
-                slug=slug,
-                status="active"
-            )
-            db.add(org)
-        else:
-            org.name = name
-            if not org.slug:
-                org.slug = await get_unique_slug(db, name)
-        await db.commit()
-
-    elif event_type == "user.created" or event_type == "user.updated":
-        clerk_user_id = data.get("id")
-        email_addresses = data.get("email_addresses", [])
-        email = email_addresses[0].get("email_address") if email_addresses else ""
-        first_name = data.get("first_name")
-        last_name = data.get("last_name")
-        
-        stmt = select(User).where(User.clerk_user_id == clerk_user_id)
-        res = await db.execute(stmt)
-        user = res.scalars().first()
-        
-        if user:
-            user.email = email
-            user.first_name = first_name
-            user.last_name = last_name
-            await db.commit()
-
-    return {"status": "processed"}
+    return {"status": "ignored"}
 
 
 # ==============================================================================
@@ -177,15 +129,16 @@ async def auth_me(
     current_user: UserSession = Depends(require_auth)
 ):
     """
-    Called immediately after Clerk login by both the frontend and admin-portal.
-    Looks up the user in TiDB, upserts if first login, updates last_login_at,
+    Called immediately after login by both the frontend and admin-portal.
+    Looks up the user in TiDB, updates last_login_at,
     and returns the role + org context the frontend needs to decide where to redirect.
     """
-    clerk_user_id = current_user.user_id
-    clerk_org_id = current_user.tenant_id  # May be None if no org in JWT
+    user_id = current_user.user_id
     
-    # 1. Look up user in TiDB
-    user_stmt = select(User).where(User.clerk_user_id == clerk_user_id).execution_options(skip_tenant_filter=True)
+    # 1. Look up user in TiDB (by ID or clerk_user_id)
+    user_stmt = select(User).where(
+        (User.id == user_id) | (User.clerk_user_id == user_id)
+    ).execution_options(skip_tenant_filter=True)
     user_res = await db.execute(user_stmt)
     user = user_res.scalars().first()
     
@@ -194,7 +147,7 @@ async def auth_me(
     # 2. If user exists, update last_login_at and return full context
     if user:
         user.last_login_at = datetime.utcnow()
-        # Also update email if it changed in Clerk
+        # Also update email if it changed
         if current_user.email:
             user.email = current_user.email
         await db.commit()
@@ -218,50 +171,72 @@ async def auth_me(
             is_platform_admin=(user.role == "platform_admin")
         )
     
-    # 3. First login — try to resolve org from Clerk JWT context
-    if clerk_org_id:
-        org_stmt = select(Organization).where(Organization.clerk_org_id == clerk_org_id)
-        org_res = await db.execute(org_stmt)
-        org = org_res.scalars().first()
-        
-        if not org:
-            # Auto-create org record if missing
-            slug = await get_unique_slug(db, clerk_org_id)
-            org = Organization(
-                name=clerk_org_id,  # Will be corrected by webhook
-                slug=slug,
-                clerk_org_id=clerk_org_id,
-                status="active"
-            )
-            db.add(org)
-            await db.flush()
-    
-    # 4. Create user record on first login
-    role = current_user.role or "org:member"
-    new_user = User(
-        tenant_id=org.id if org else None,
-        clerk_user_id=clerk_user_id,
-        email=current_user.email or "",
-        first_name=current_user.email.split("@")[0] if current_user.email else "",
-        last_name="",
-        role=role,
-        status="active",
-        last_login_at=datetime.utcnow()
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="User session not found in database."
     )
-    db.add(new_user)
-    await db.commit()
-    await db.refresh(new_user)
+
+@router.post("/auth/login", response_model=LoginResponse, status_code=status.HTTP_200_OK)
+async def auth_login(
+    req: LoginRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Authenticate a user locally using email and password.
+    If no users exist in the database (bootstrap stage), automatically
+    creates the platform admin user: admin@admin.com / admin123
+    """
+    # 1. Check if database has 0 users. If so, seed the default platform admin
+    count_stmt = select(func.count(User.id)).execution_options(skip_tenant_filter=True)
+    count_res = await db.execute(count_stmt)
+    total_users = count_res.scalar() or 0
     
-    return AuthMeResponse(
-        user_id=new_user.id,
-        clerk_user_id=clerk_user_id,
-        email=new_user.email,
-        role=role,
-        org_id=org.id if org else None,
-        org_slug=org.slug if org else None,
-        clerk_org_id=org.clerk_org_id if org else None,
-        status=new_user.status,
-        is_platform_admin=(role == "platform_admin")
+    if total_users == 0:
+        admin_user = User(
+            email="admin@admin.com",
+            password_hash=hash_password("admin123"),
+            role="platform_admin",
+            status="active",
+            first_name="Platform",
+            last_name="Admin",
+            clerk_user_id="local_admin",
+            last_login_at=datetime.utcnow()
+        )
+        db.add(admin_user)
+        await db.commit()
+        await db.refresh(admin_user)
+
+    # 2. Look up user by email
+    user_stmt = select(User).where(User.email == req.email).execution_options(skip_tenant_filter=True)
+    user_res = await db.execute(user_stmt)
+    user = user_res.scalars().first()
+
+    if not user or not user.password_hash or not verify_password(req.password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password."
+        )
+
+    # 3. Update last login
+    user.last_login_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(user)
+
+    # 4. Generate local HS256 JWT
+    token = create_access_token(
+        user_id=user.id,
+        email=user.email,
+        org_id=user.tenant_id,
+        org_role=user.role
+    )
+
+    return LoginResponse(
+        token=token,
+        user_id=user.id,
+        email=user.email,
+        role=user.role,
+        org_id=user.tenant_id,
+        is_platform_admin=(user.role == "platform_admin")
     )
 
 
@@ -1070,7 +1045,8 @@ async def invite_user(
         email=invite_in.email,
         first_name=invite_in.first_name,
         last_name=invite_in.last_name,
-        role=invite_in.role
+        role=invite_in.role,
+        password_hash=hash_password(temp_password)
     )
     db.add(db_user)
     await db.commit()
@@ -1112,6 +1088,82 @@ async def invite_user(
         "temp_password": temp_password,
         "user_id": db_user.id
     }
+
+
+@router.patch("/users/{user_id}", response_model=UserResponse)
+async def update_user(
+    user_id: str,
+    req: UserUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSession = Depends(require_auth)
+):
+    """
+    Update a user's profile, role, status, or password locally (Admin-only).
+    """
+    # 1. Verify caller is platform admin
+    admin_stmt = select(User).where(User.clerk_user_id == current_user.user_id, User.role == "platform_admin").execution_options(skip_tenant_filter=True)
+    admin_res = await db.execute(admin_stmt)
+    if not admin_res.scalars().first():
+        if current_user.role != "platform_admin":
+            raise HTTPException(status_code=403, detail="Only platform admins can perform this action")
+
+    # 2. Fetch target user
+    user_stmt = select(User).where(User.id == user_id).execution_options(skip_tenant_filter=True)
+    user_res = await db.execute(user_stmt)
+    user = user_res.scalars().first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # 3. Update fields
+    if req.email is not None:
+        user.email = req.email
+    if req.first_name is not None:
+        user.first_name = req.first_name
+    if req.last_name is not None:
+        user.last_name = req.last_name
+    if req.role is not None:
+        user.role = req.role
+    if req.status is not None:
+        user.status = req.status
+    if req.password is not None and req.password != "":
+        user.password_hash = hash_password(req.password)
+
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+
+@router.delete("/users/{user_id}", status_code=status.HTTP_200_OK)
+async def delete_user(
+    user_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSession = Depends(require_auth)
+):
+    """
+    Delete a user from the platform locally (Admin-only).
+    """
+    # 1. Verify caller is platform admin
+    admin_stmt = select(User).where(User.clerk_user_id == current_user.user_id, User.role == "platform_admin").execution_options(skip_tenant_filter=True)
+    admin_res = await db.execute(admin_stmt)
+    if not admin_res.scalars().first():
+        if current_user.role != "platform_admin":
+            raise HTTPException(status_code=403, detail="Only platform admins can perform this action")
+
+    # 2. Fetch target user
+    user_stmt = select(User).where(User.id == user_id).execution_options(skip_tenant_filter=True)
+    user_res = await db.execute(user_stmt)
+    user = user_res.scalars().first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Prevent deleting yourself
+    if user.clerk_user_id == current_user.user_id:
+        raise HTTPException(status_code=400, detail="You cannot delete your own platform admin user account.")
+
+    # 3. Delete user
+    await db.delete(user)
+    await db.commit()
+    return {"status": "success", "message": "User deleted successfully"}
 
 
 # ==============================================================================
@@ -1537,7 +1589,8 @@ async def create_invitation(
         first_name=invite_in.first_name,
         last_name=invite_in.last_name,
         role=invite_in.role,
-        department_id=invite_in.department_id
+        department_id=invite_in.department_id,
+        password_hash=hash_password(temp_password)
     )
     db.add(db_user)
     await db.commit()

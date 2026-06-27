@@ -1,15 +1,15 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { useUser } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
 import { SafeSignOutButton } from "@/components/SafeSignOutButton";
 import { Building, Mail, Phone, Users, FileText, CheckCircle2, AlertCircle, ArrowLeft, LogOut } from "lucide-react";
 
 export default function NoOrganizationPage() {
-  const { user, isLoaded } = useUser();
   const router = useRouter();
   
+  const [user, setUser] = useState<any>(null);
+  const [isLoaded, setIsLoaded] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -24,13 +24,44 @@ export default function NoOrganizationPage() {
   const [companySize, setCompanySize] = useState("11-50");
   const [notes, setNotes] = useState("");
 
-  // Prefill contact info when user loads
+  const apiHost = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+  // Fetch logged in user profile on mount
   useEffect(() => {
-    if (user) {
-      setContactPerson(user.fullName || `${user.firstName || ""} ${user.lastName || ""}`.trim());
-      setBusinessEmail(user.primaryEmailAddress?.emailAddress || "");
+    async function fetchUser() {
+      try {
+        const token = localStorage.getItem("auth_token") || document.cookie.match(/auth_token=([^;]+)/)?.[1];
+        if (!token) {
+          router.replace("/sign-in");
+          return;
+        }
+
+        const response = await fetch(`${apiHost}/api/v1/system/auth/me`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        });
+
+        if (!response.ok) {
+          router.replace("/sign-in");
+          return;
+        }
+
+        const data = await response.json();
+        setUser(data);
+        setContactPerson(data.name || "");
+        setBusinessEmail(data.email || "");
+      } catch (err) {
+        console.error("Failed to fetch user in onboarding:", err);
+      } finally {
+        setIsLoaded(true);
+      }
     }
-  }, [user]);
+
+    fetchUser();
+  }, [router, apiHost]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -48,7 +79,6 @@ export default function NoOrganizationPage() {
     };
 
     try {
-      const apiHost = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
       const response = await fetch(`${apiHost}/api/v1/system/organization-requests`, {
         method: "POST",
         headers: {
@@ -70,11 +100,27 @@ export default function NoOrganizationPage() {
     }
   };
 
+  if (!isLoaded) {
+    return (
+      <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 flex flex-col items-center justify-center gap-4">
+        <div className="relative h-12 w-12">
+          <div className="h-12 w-12 rounded-xl bg-blue-600/20 border border-blue-500/20 flex items-center justify-center">
+            <svg className="w-6 h-6 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.955 11.955 0 013 12c0 2.784.952 5.346 2.532 7.374M12 21a11.955 11.955 0 006.402-1.874M21 12c0-2.784-.952-5.346-2.532-7.374" />
+            </svg>
+          </div>
+          <div className="absolute -inset-1 rounded-[14px] border-2 border-blue-500/30 border-t-blue-500 animate-spin" />
+        </div>
+        <p className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">Loading details…</p>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col justify-center py-12 sm:px-6 lg:px-8 bg-zinc-50 dark:bg-zinc-950 transition-colors duration-300">
       <div className="sm:mx-auto sm:w-full sm:max-w-md text-center">
         <div className="inline-flex items-center justify-center p-3 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-2xl shadow-inner mb-4">
-          <Building className="h-8 w-8 animate-pulse" />
+          <Building className="h-8 w-8" />
         </div>
         <h2 className="text-3xl font-extrabold text-zinc-900 dark:text-zinc-50 tracking-tight">
           Supplier<span className="text-blue-600 dark:text-blue-500">ERP</span>
