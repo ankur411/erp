@@ -10,7 +10,7 @@ const API_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export default clerkMiddleware(async (auth, request) => {
-  // Always allow sign-in page
+  // Always allow sign-in page through
   if (isPublicRoute(request)) {
     return NextResponse.next();
   }
@@ -23,18 +23,20 @@ export default clerkMiddleware(async (auth, request) => {
     return NextResponse.next();
   }
 
-  // Enforce authentication — redirects to /sign-in if not signed in
-  await auth.protect();
+  // Resolve auth session — redirects to /sign-in if unauthenticated
+  const { userId, getToken } = await auth();
 
-  // Verify platform_admin role via backend /auth/me
-  const session = await auth();
-  const token = await session.getToken();
-
-  if (!token) {
+  if (!userId) {
     return NextResponse.redirect(new URL("/sign-in", request.url));
   }
 
+  // Verify platform_admin role via backend /auth/me
   try {
+    const token = await getToken();
+    if (!token) {
+      return NextResponse.redirect(new URL("/sign-in", request.url));
+    }
+
     const meResponse = await fetch(`${API_URL}/api/v1/system/auth/me`, {
       method: "POST",
       headers: {
@@ -48,18 +50,18 @@ export default clerkMiddleware(async (auth, request) => {
 
       // Only platform admins may access this portal
       if (!userData.is_platform_admin) {
-        // Non-admins get redirected back to the client portal
+        // Non-admins → redirect back to client portal
         return NextResponse.redirect(CLIENT_PORTAL_URL);
       }
 
-      // Platform admin — allow access
+      // Platform admin confirmed — allow access
       return NextResponse.next();
     }
 
     // Backend returned an error — deny and go to sign-in
     return NextResponse.redirect(new URL("/sign-in", request.url));
   } catch {
-    // Backend unreachable — fail secure
+    // Backend unreachable — fail secure (redirect to sign-in, not client portal)
     return NextResponse.redirect(new URL("/sign-in", request.url));
   }
 });

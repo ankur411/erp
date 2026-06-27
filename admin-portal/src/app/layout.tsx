@@ -24,28 +24,24 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const isClerkEnabled = process.env.ENABLE_CLERK === "true" || !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  const clerkKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
 
-  const content = (
+  const inner = (
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
-        <Providers>
-          {children}
-        </Providers>
+        <Providers>{children}</Providers>
       </body>
     </html>
   );
 
-  if (!isClerkEnabled) {
-    return content;
+  // ClerkProvider must wrap the entire app when Clerk is configured
+  // so that <SignIn> and useAuth() have context on every page.
+  if (clerkKey) {
+    return <ClerkProvider publishableKey={clerkKey}>{inner}</ClerkProvider>;
   }
 
-  return (
-    <ClerkProvider>
-      {content}
-    </ClerkProvider>
-  );
+  return inner;
 }
