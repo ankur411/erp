@@ -10,13 +10,51 @@ from app.config import settings
 tenant_context: ContextVar[str] = ContextVar("tenant_id", default="")
 user_context: ContextVar[str] = ContextVar("user_id", default="")
 
+import ssl
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+
+# Helper to clean database URL and extract SSL parameters for aiomysql compatibility
+def get_engine_and_connect_args(url: str):
+    parsed = urlparse(url)
+    query_params = parse_qs(parsed.query)
+    
+    ssl_context = None
+    # If SSL CA certificate path is specified, construct a proper SSLContext object
+    if "ssl_ca" in query_params or "ssl" in query_params:
+        ca_path = query_params.get("ssl_ca", [None])[0]
+        ssl_context = ssl.create_default_context(cafile=ca_path)
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_REQUIRED
+        
+        # Remove ssl query params since they are not supported as raw dicts by aiomysql
+        clean_query = {k: v for k, v in query_params.items() if k not in ("ssl_ca", "ssl")}
+        parsed = parsed._replace(query=urlencode(clean_query, doseq=True))
+        clean_url = urlunparse(parsed)
+    else:
+        clean_url = url
+        
+    connect_args = {}
+    if ssl_context:
+        connect_args["ssl"] = ssl_context
+        
+    return clean_url, connect_args
+
+# Clean up settings.DATABASE_URL if quotes exist
+db_url = settings.DATABASE_URL
+if db_url.startswith('"') and db_url.endswith('"'):
+    db_url = db_url[1:-1]
+
+clean_db_url, connect_args = get_engine_and_connect_args(db_url)
+
 # Database Connection Settings
 engine = create_async_engine(
-    settings.DATABASE_URL,
+    clean_db_url,
+    connect_args=connect_args,
     pool_pre_ping=True,
     pool_size=10,
     max_overflow=20
 )
+
 
 SessionLocal = async_sessionmaker(
     bind=engine,

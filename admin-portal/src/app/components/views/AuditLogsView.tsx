@@ -15,6 +15,8 @@ import {
   Eye,
   ArrowDownToLine
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { useApi } from "@/lib/api";
 
 interface AuditLog {
   id: string;
@@ -26,68 +28,41 @@ interface AuditLog {
   details: string;
 }
 
-const INITIAL_LOGS: AuditLog[] = [
-  {
-    id: "log-1",
-    timestamp: "2026-06-25T17:15:22+05:30",
-    action: "Workspace Module Toggle",
-    user: "admin@suppliererp.com",
-    ip: "122.161.49.201",
-    category: "workspace",
-    details: "Toggled 'Finance' module to ENABLED for tenant 'Nexus Logistics Ltd.'"
-  },
-  {
-    id: "log-2",
-    timestamp: "2026-06-25T16:42:10+05:30",
-    action: "Pricing Plan Published",
-    user: "admin@suppliererp.com",
-    ip: "122.161.49.201",
-    category: "pricing",
-    details: "Modified limits and published updates to 'Starter Plan' tier."
-  },
-  {
-    id: "log-3",
-    timestamp: "2026-06-25T15:30:45+05:30",
-    action: "Security Key Revocation",
-    user: "admin@suppliererp.com",
-    ip: "122.161.49.201",
-    category: "security",
-    details: "Revoked legacy Stripe webhook subscription endpoint API Key."
-  },
-  {
-    id: "log-4",
-    timestamp: "2026-06-25T14:12:03+05:30",
-    action: "User Invitation Dispatched",
-    user: "admin@suppliererp.com",
-    ip: "122.161.49.201",
-    category: "auth",
-    details: "Sent organization invite to 'priya.sharma@acme.com' under Acme Manufacturing."
-  },
-  {
-    id: "log-5",
-    timestamp: "2026-06-25T11:00:15+05:30",
-    action: "Celery Backup Initiated",
-    user: "system_cron",
-    ip: "127.0.0.1",
-    category: "system",
-    details: "Automated snapshot backup generated and uploaded to Cloudflare R2 bucket."
-  },
-  {
-    id: "log-6",
-    timestamp: "2026-06-25T09:24:55+05:30",
-    action: "Suspicious Activity Blocked",
-    user: "security_guard",
-    ip: "185.220.101.44",
-    category: "security",
-    details: "Rate limited SSH attempt on backend cluster. IP blacklisted for 24h."
-  }
-];
-
 export default function AuditLogsView() {
-  const [logs, setLogs] = useState<AuditLog[]>(INITIAL_LOGS);
+  const { authFetch } = useApi();
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [ipFilter, setIpFilter] = useState("");
+
+  const categoryMap = (action: string, targetTable: string): "auth" | "workspace" | "pricing" | "security" | "system" => {
+    const act = action.toLowerCase();
+    const tbl = (targetTable || "").toLowerCase();
+    if (act.includes("auth") || act.includes("user") || act.includes("invite") || tbl.includes("user") || tbl.includes("profile")) return "auth";
+    if (act.includes("tenant") || act.includes("organization") || tbl.includes("tenant") || tbl.includes("organization")) return "workspace";
+    if (act.includes("plan") || act.includes("pricing") || act.includes("payment") || act.includes("revenue") || tbl.includes("plan") || tbl.includes("payment")) return "pricing";
+    if (act.includes("threat") || act.includes("ssh") || act.includes("key") || act.includes("token") || act.includes("security") || act.includes("ip")) return "security";
+    return "system";
+  };
+
+  // Fetch live audit logs
+  const { data: logs = [], isLoading } = useQuery<AuditLog[]>({
+    queryKey: ["admin-audit-logs-full"],
+    queryFn: async () => {
+      const res = await authFetch("/api/v1/system/audit-logs?limit=100");
+      if (!res.ok) throw new Error("Failed to fetch audit logs");
+      const rawLogs = await res.json();
+      return rawLogs.map((log: any) => ({
+        id: log.id,
+        timestamp: log.created_at,
+        action: log.action.replace(/_/g, " "),
+        user: log.created_by || "System",
+        ip: log.ip_address || "127.0.0.1",
+        category: categoryMap(log.action, log.target_table),
+        details: `Action performed on ${log.target_table} ID: ${log.target_id || "N/A"}.`
+      }));
+    },
+    refetchInterval: 15000,
+  });
 
   const handleExport = () => {
     const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(

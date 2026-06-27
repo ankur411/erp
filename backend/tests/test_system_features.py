@@ -294,3 +294,35 @@ async def test_api_key_lifecycle(client, db_session):
     assert revoked_response.status_code == 401
 
 
+@pytest.mark.asyncio
+async def test_platform_analytics_history_and_audit_logs(client, db_session):
+    """
+    Test platform-wide analytics history and audit logs endpoints.
+    """
+    # 1. Setup mock auth dependency to represent platform admin
+    app.dependency_overrides[require_auth] = mock_require_auth
+
+    try:
+        # Create a tenant and some payments/audit logs
+        tenant = Organization(name="History Org", slug="history-org", clerk_org_id="org_hist_123", status="active")
+        db_session.add(tenant)
+        await db_session.commit()
+        await db_session.refresh(tenant)
+
+        # Call analytics history
+        response = await client.get("/api/v1/system/analytics/history")
+        assert response.status_code == 200
+        data = response.json()
+        assert "history" in data
+        assert len(data["history"]) > 0
+
+        # Call audit logs
+        response_logs = await client.get("/api/v1/system/audit-logs?limit=10")
+        assert response_logs.status_code == 200
+        logs = response_logs.json()
+        assert isinstance(logs, list)
+
+    finally:
+        app.dependency_overrides.clear()
+
+

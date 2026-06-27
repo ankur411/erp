@@ -19,8 +19,7 @@ import {
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useERPStore } from "@/lib/store";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { useApi } from "@/lib/api";
 
 interface Organization {
   id: string;
@@ -40,6 +39,7 @@ interface Organization {
 export default function OrganizationsView() {
   const queryClient = useQueryClient();
   const { registerTenant, updateTenantAccess } = useERPStore();
+  const { authFetch } = useApi();
 
   const [searchQuery, setSearchQuery] = useState("");
   const [showProvisionModal, setShowProvisionModal] = useState(false);
@@ -62,43 +62,16 @@ export default function OrganizationsView() {
   const { data: tenants = [], isLoading, error } = useQuery<Organization[]>({
     queryKey: ["admin-tenants"],
     queryFn: async () => {
-      const res = await fetch(`${API_URL}/api/v1/system/tenants`);
+      const res = await authFetch("/api/v1/system/tenants");
       if (!res.ok) throw new Error("Failed to fetch tenants");
       return res.json();
     },
-    // Fallback default mock data if backend not fully up
-    initialData: [
-      {
-        id: "org-1",
-        name: "Acme Manufacturing Inc.",
-        clerk_org_id: "org_2b9c3df82aa173",
-        status: "active",
-        created_at: "2026-01-15T08:30:00Z",
-        access_config: { suppliers: true, products: true, inventory: true, purchase_orders: true, finance: true }
-      },
-      {
-        id: "org-2",
-        name: "Nexus Logistics Ltd.",
-        clerk_org_id: "org_48a9010bbcc234",
-        status: "active",
-        created_at: "2026-03-22T10:15:00Z",
-        access_config: { suppliers: true, products: false, inventory: true, purchase_orders: true, finance: false }
-      },
-      {
-        id: "org-3",
-        name: "Apex Distributors",
-        clerk_org_id: "org_77ddf44e8812c3",
-        status: "suspended",
-        created_at: "2026-04-05T14:45:00Z",
-        access_config: { suppliers: false, products: false, inventory: false, purchase_orders: false, finance: false }
-      }
-    ]
   });
 
   // Mutate tenant module access config
   const updateAccessMutation = useMutation({
     mutationFn: async ({ tenantId, accessConfig }: { tenantId: string; accessConfig: typeof accessModules }) => {
-      const res = await fetch(`${API_URL}/api/v1/system/tenants/${tenantId}/access`, {
+      const res = await authFetch(`/api/v1/system/tenants/${tenantId}/access`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(accessConfig),

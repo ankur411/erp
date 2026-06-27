@@ -16,8 +16,7 @@ import {
   HelpCircle
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { useApi } from "@/lib/api";
 
 interface Plan {
   id: string;
@@ -40,6 +39,7 @@ interface Plan {
 
 export default function PricingPlansView() {
   const queryClient = useQueryClient();
+  const { authFetch } = useApi();
 
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingPlan, setEditingPlan] = useState<Plan | null>(null);
@@ -67,51 +67,10 @@ export default function PricingPlansView() {
   const { data: plans = [], isLoading } = useQuery<Plan[]>({
     queryKey: ["admin-plans"],
     queryFn: async () => {
-      const res = await fetch(`${API_URL}/api/v1/system/plans`);
+      const res = await authFetch("/api/v1/system/plans");
       if (!res.ok) throw new Error("Failed to fetch plans");
       return res.json();
     },
-    initialData: [
-      {
-        id: "plan-starter",
-        name: "Starter Plan",
-        price: "₹1,999",
-        period: "/month",
-        description: "Best for small suppliers just digitizing operations.",
-        features: ["Up to 5 Users", "Up to 50 Suppliers", "Basic Inventory", "Email Support"],
-        popular: false,
-        cta: "Start 14-Day Free Trial",
-        trial_days: 14,
-        limits: { max_users: 5, max_suppliers: 50, max_purchase_orders: 50, max_warehouses: 1 },
-        created_at: "2026-01-01T00:00:00Z"
-      },
-      {
-        id: "plan-pro",
-        name: "Professional Plan",
-        price: "₹4,999",
-        period: "/month",
-        description: "Optimal for growing logistics and distribution operations.",
-        features: ["Up to 25 Users", "Unlimited Suppliers", "Multi-Warehouse Routing", "Priority Support", "GST Intelligence Panel"],
-        popular: true,
-        cta: "Start 14-Day Free Trial",
-        trial_days: 14,
-        limits: { max_users: 25, max_suppliers: 9999, max_purchase_orders: 1000, max_warehouses: 5 },
-        created_at: "2026-01-01T00:00:00Z"
-      },
-      {
-        id: "plan-enterprise",
-        name: "Enterprise Custom",
-        price: "Custom Price",
-        period: "",
-        description: "Tailored limits and dedicated database instance for global conglomerates.",
-        features: ["Unlimited Users", "Unlimited Locations", "Custom SLA Commitments", "Dedicated Account Manager", "White-labeled Portal"],
-        popular: false,
-        cta: "Contact Platform Sales",
-        trial_days: 0,
-        limits: { max_users: 99999, max_suppliers: 99999, max_purchase_orders: 99999, max_warehouses: 99 },
-        created_at: "2026-01-01T00:00:00Z"
-      }
-    ]
   });
 
   // Mutate plan (Create / Edit)
@@ -119,12 +78,12 @@ export default function PricingPlansView() {
     mutationFn: async (payload: any) => {
       const isEdit = !!editingPlan;
       const url = isEdit
-        ? `${API_URL}/api/v1/system/plans/${editingPlan.id}`
-        : `${API_URL}/api/v1/system/plans`;
+        ? `/api/v1/system/plans/${editingPlan.id}`
+        : `/api/v1/system/plans`;
       
       const method = isEdit ? "PUT" : "POST";
 
-      const res = await fetch(url, {
+      const res = await authFetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -168,7 +127,7 @@ export default function PricingPlansView() {
   // Mutate plan deletion
   const deletePlanMutation = useMutation({
     mutationFn: async (planId: string) => {
-      const res = await fetch(`${API_URL}/api/v1/system/plans/${planId}`, {
+      const res = await authFetch(`/api/v1/system/plans/${planId}`, {
         method: "DELETE",
       });
       if (!res.ok) throw new Error("Failed to delete pricing tier");

@@ -20,7 +20,8 @@ from app.config import settings
 from app.core.storage import generate_presigned_upload_url, generate_presigned_download_url
 from app.modules.system.schemas import (
     DocumentCreate, PresignedUploadRequest, PresignedUploadResponse, DocumentResponse,
-    OrganizationAccessUpdate, OrganizationResponse, PlatformAnalyticsResponse, PlanCreate, PlanUpdate, PlanResponse, UserInviteRequest, UserResponse
+    OrganizationAccessUpdate, OrganizationResponse, PlatformAnalyticsResponse, PlanCreate, PlanUpdate, PlanResponse, UserInviteRequest, UserResponse,
+    PlatformHistoryResponse, PlatformHistoryDataPoint, AuditLogResponse
 )
 
 def slugify(text: str) -> str:
@@ -402,6 +403,75 @@ async def get_platform_analytics(
         total_revenue=total_revenue,
         total_documents_uploaded=total_documents_uploaded
     )
+
+
+@router.get("/analytics/history", response_model=PlatformHistoryResponse)
+async def get_platform_analytics_history(
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSession = Depends(require_auth)
+):
+    """
+    Get platform-wide aggregated analytics history for the last 6 months.
+    """
+    import calendar
+    today = datetime.utcnow()
+    months = []
+    for i in range(5, -1, -1):
+        year = today.year
+        month = today.month - i
+        while month <= 0:
+            month += 12
+            year -= 1
+        months.append((year, month))
+        
+    history = []
+    for year, month in months:
+        start_date = datetime(year, month, 1)
+        _, last_day = calendar.monthrange(year, month)
+        end_date = datetime(year, month, last_day, 23, 59, 59)
+        
+        # Query total organizations created up to this end_date
+        orgs_stmt = select(func.count(Organization.id))\
+            .where(Organization.created_at <= end_date)\
+            .execution_options(skip_tenant_filter=True)
+        orgs_res = await db.execute(orgs_stmt)
+        total_orgs = orgs_res.scalar() or 0
+        
+        # Query revenue in this specific month
+        rev_stmt = select(func.sum(Payment.amount))\
+            .where(Payment.paid_at >= start_date, Payment.paid_at <= end_date)\
+            .execution_options(skip_tenant_filter=True)
+        rev_res = await db.execute(rev_stmt)
+        monthly_rev = float(rev_res.scalar() or 0.0)
+        
+        month_name = start_date.strftime("%b %Y")
+        history.append(
+            PlatformHistoryDataPoint(
+                month=month_name,
+                organizations=total_orgs,
+                revenue=monthly_rev
+            )
+        )
+        
+    return PlatformHistoryResponse(history=history)
+
+
+@router.get("/audit-logs", response_model=List[AuditLogResponse])
+async def list_audit_logs(
+    limit: int = Query(50, ge=1, le=250),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSession = Depends(require_auth)
+):
+    """
+    Get platform-wide audit logs across all tenants.
+    """
+    stmt = select(AuditLog)\
+        .order_by(AuditLog.created_at.desc())\
+        .limit(limit)\
+        .execution_options(skip_tenant_filter=True)
+    res = await db.execute(stmt)
+    return res.scalars().all()
+
 
 # --- PRICING PLANS CRUD ---
 

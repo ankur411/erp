@@ -17,8 +17,7 @@ import {
   AlertCircle
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { useApi } from "@/lib/api";
 
 interface User {
   id: string;
@@ -38,6 +37,7 @@ interface Tenant {
 
 export default function UsersView() {
   const queryClient = useQueryClient();
+  const { authFetch } = useApi();
 
   const [searchQuery, setSearchQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
@@ -58,74 +58,26 @@ export default function UsersView() {
   const { data: users = [], isLoading, error } = useQuery<User[]>({
     queryKey: ["admin-users"],
     queryFn: async () => {
-      const res = await fetch(`${API_URL}/api/v1/system/users`);
+      const res = await authFetch("/api/v1/system/users");
       if (!res.ok) throw new Error("Failed to fetch users");
       return res.json();
     },
-    // Fallback mock data
-    initialData: [
-      {
-        id: "usr-1",
-        tenant_id: "org-1",
-        clerk_user_id: "user_2a3b4c5d6e7f8g",
-        email: "amit.kumar@acme.com",
-        first_name: "Amit",
-        last_name: "Kumar",
-        role: "org:admin",
-        created_at: "2026-01-16T09:00:00Z"
-      },
-      {
-        id: "usr-2",
-        tenant_id: "org-1",
-        clerk_user_id: "user_8h9i0j1k2l3m4n",
-        email: "priya.sharma@acme.com",
-        first_name: "Priya",
-        last_name: "Sharma",
-        role: "org:member",
-        created_at: "2026-02-10T11:30:00Z"
-      },
-      {
-        id: "usr-3",
-        tenant_id: "org-2",
-        clerk_user_id: "user_5o6p7q8r9s0t1u",
-        email: "rohit.sen@nexus.com",
-        first_name: "Rohit",
-        last_name: "Sen",
-        role: "org:admin",
-        created_at: "2026-03-23T14:00:00Z"
-      },
-      {
-        id: "usr-4",
-        tenant_id: "system",
-        clerk_user_id: "user_admin_super11",
-        email: "admin@suppliererp.com",
-        first_name: "Platform",
-        last_name: "Admin",
-        role: "platform_admin",
-        created_at: "2026-01-01T00:00:00Z"
-      }
-    ]
   });
 
   // Fetch tenants for dropdown selector
   const { data: tenants = [] } = useQuery<Tenant[]>({
     queryKey: ["admin-tenants-simple"],
     queryFn: async () => {
-      const res = await fetch(`${API_URL}/api/v1/system/tenants`);
+      const res = await authFetch("/api/v1/system/tenants");
       if (!res.ok) throw new Error("Failed to fetch tenants");
       return res.json();
     },
-    initialData: [
-      { id: "org-1", name: "Acme Manufacturing Inc." },
-      { id: "org-2", name: "Nexus Logistics Ltd." },
-      { id: "org-3", name: "Apex Distributors" }
-    ]
   });
 
   // Invite user mutation
   const inviteMutation = useMutation({
     mutationFn: async (formData: typeof inviteForm) => {
-      const res = await fetch(`${API_URL}/api/v1/system/users/invite`, {
+      const res = await authFetch("/api/v1/system/users/invite", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(formData),

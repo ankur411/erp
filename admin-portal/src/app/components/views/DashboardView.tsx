@@ -31,41 +31,63 @@ import {
 } from "recharts";
 import { useQuery } from "@tanstack/react-query";
 import { formatSmartNumber } from "@/lib/utils";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { useApi } from "@/lib/api";
 
 interface DashboardViewProps {
   setView: (view: string) => void;
 }
 
-const REVENUE_DATA = [
-  { month: "Jan", revenue: 4200, users: 120 },
-  { month: "Feb", revenue: 5800, users: 180 },
-  { month: "Mar", revenue: 8400, users: 240 },
-  { month: "Apr", revenue: 12500, users: 310 },
-  { month: "May", revenue: 17200, users: 420 },
-  { month: "Jun", revenue: 24500, users: 590 },
-];
-
 export default function DashboardView({ setView }: DashboardViewProps) {
   const [timeRange, setTimeRange] = useState("30d");
+  const { authFetch } = useApi();
 
   // Fetch live analytics
   const { data: analytics, isLoading } = useQuery({
     queryKey: ["platform-analytics"],
     queryFn: async () => {
-      const res = await fetch(`${API_URL}/api/v1/system/analytics`);
+      const res = await authFetch("/api/v1/system/analytics");
       if (!res.ok) throw new Error("Failed to fetch analytics");
       return res.json();
     },
     refetchInterval: 10000,
   });
 
+  // Fetch live history analytics
+  const { data: historyData = [] } = useQuery({
+    queryKey: ["platform-analytics-history"],
+    queryFn: async () => {
+      const res = await authFetch("/api/v1/system/analytics/history");
+      if (!res.ok) throw new Error("Failed to fetch history analytics");
+      const data = await res.json();
+      return data.history || [];
+    }
+  });
+
+  // Fetch live logs feed
+  const { data: auditLogs = [], isLoading: isLoadingLogs } = useQuery({
+    queryKey: ["platform-audit-logs-recent"],
+    queryFn: async () => {
+      const res = await authFetch("/api/v1/system/audit-logs?limit=5");
+      if (!res.ok) throw new Error("Failed to fetch audit logs");
+      return res.json();
+    },
+    refetchInterval: 15000,
+  });
+
+  // Map history to chart structure
+  const revenueChartData = historyData.length > 0 ? historyData.map((d: any) => ({
+    month: d.month,
+    revenue: d.revenue,
+    users: d.organizations
+  })) : [
+    { month: "No Data", revenue: 0, users: 0 }
+  ];
+
   const stats = [
     {
       label: "Total Organizations",
       value: analytics?.total_organizations ?? 0,
-      change: "+15.4%",
+      change: "+0.0%",
       trend: "up",
       icon: Building2,
       color: "blue",
@@ -73,7 +95,7 @@ export default function DashboardView({ setView }: DashboardViewProps) {
     {
       label: "Active Platform Users",
       value: analytics?.total_active_users ?? 0,
-      change: "+22.1%",
+      change: "+0.0%",
       trend: "up",
       icon: Users,
       color: "cyan",
@@ -81,16 +103,16 @@ export default function DashboardView({ setView }: DashboardViewProps) {
     {
       label: "Platform Revenue",
       value: analytics?.total_revenue ? `₹${formatSmartNumber(analytics.total_revenue)}` : "₹0",
-      change: "+31.8%",
+      change: "+0.0%",
       trend: "up",
       icon: CreditCard,
       color: "emerald",
     },
     {
       label: "API Request Rate",
-      value: "1,482 req/m",
-      change: "-2.4%",
-      trend: "down",
+      value: "0 req/m",
+      change: "0.0%",
+      trend: "up",
       icon: Activity,
       color: "indigo",
     },
@@ -198,7 +220,7 @@ export default function DashboardView({ setView }: DashboardViewProps) {
           
           <div className="h-72 w-full text-xs">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={REVENUE_DATA} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+              <AreaChart data={revenueChartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#2563EB" stopOpacity={0.2}/>
@@ -240,30 +262,44 @@ export default function DashboardView({ setView }: DashboardViewProps) {
             </div>
 
             <div className="space-y-3.5 max-h-72 overflow-y-auto pr-1">
-              <div className="flex items-start gap-2.5 text-[11px] leading-normal">
-                <AlertCircle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-semibold text-slate-700 dark:text-slate-300">API Key Rotation Needed</p>
-                  <p className="text-slate-400">System generated warning for Stripe Webhook key age.</p>
-                  <span className="text-[9px] text-slate-500 font-bold block mt-0.5">2m ago</span>
+              {isLoadingLogs ? (
+                <div className="space-y-3">
+                  {[1, 2, 3].map((n) => (
+                    <div key={n} className="h-12 bg-slate-100 dark:bg-slate-800 animate-pulse rounded-lg" />
+                  ))}
                 </div>
-              </div>
-              <div className="flex items-start gap-2.5 text-[11px] leading-normal">
-                <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-semibold text-slate-700 dark:text-slate-300">Backup Succeeded</p>
-                  <p className="text-slate-400">TiDB automated backup saved to Cloudflare R2 bucket.</p>
-                  <span className="text-[9px] text-slate-500 font-bold block mt-0.5">1h ago</span>
+              ) : auditLogs.length === 0 ? (
+                <div className="text-center py-8 text-slate-400 dark:text-slate-500 text-xs">
+                  No security events or audit logs recorded yet.
                 </div>
-              </div>
-              <div className="flex items-start gap-2.5 text-[11px] leading-normal">
-                <AlertCircle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-semibold text-slate-700 dark:text-slate-300">Rate Limit Exceeded</p>
-                  <p className="text-slate-400">IP 103.44.201.12 rate-limited on user invite route.</p>
-                  <span className="text-[9px] text-slate-500 font-bold block mt-0.5">2h ago</span>
-                </div>
-              </div>
+              ) : (
+                auditLogs.map((log: any) => {
+                  const date = new Date(log.created_at);
+                  const timeStr = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+                  const dateStr = date.toLocaleDateString([], { month: "short", day: "numeric" });
+                  
+                  const isAlert = log.action.includes("DELETE") || log.action.includes("FAIL") || log.action.includes("WARN") || log.action.includes("ERROR");
+                  const LogIcon = isAlert ? AlertCircle : CheckCircle2;
+                  const iconColor = isAlert ? "text-amber-500 animate-pulse" : "text-emerald-500";
+                  
+                  return (
+                    <div key={log.id} className="flex items-start gap-2.5 text-[11px] leading-normal border-b border-slate-100 dark:border-slate-800/40 pb-2.5 last:border-0 last:pb-0">
+                      <LogIcon className={`h-4 w-4 ${iconColor} shrink-0 mt-0.5`} />
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-slate-700 dark:text-slate-300 truncate">
+                          {log.action.replace(/_/g, " ")}
+                        </p>
+                        <p className="text-slate-400 truncate">
+                          {log.target_table} ID: {log.target_id || "N/A"}
+                        </p>
+                        <span className="text-[9px] text-slate-500 font-bold block mt-0.5">
+                          {dateStr} at {timeStr}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
             </div>
           </div>
 

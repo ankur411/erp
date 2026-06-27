@@ -140,3 +140,30 @@ class ApiKeyCreatedResponse(ApiKeyResponse):
     key: str
 
 
+class PlatformHistoryDataPoint(BaseModel):
+    month: str
+    organizations: int
+    revenue: float
+
+
+class PlatformHistoryResponse(BaseModel):
+    history: list[PlatformHistoryDataPoint]
+
+
+class AuditLogResponse(BaseModel):
+    id: str
+    tenant_id: str
+    user_id: Optional[str] = None
+    action: str
+    target_table: str
+    target_id: Optional[str] = None
+    old_values: Optional[dict] = None
+    new_values: Optional[dict] = None
+    ip_address: Optional[str] = None
+    created_by: Optional[str] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+
