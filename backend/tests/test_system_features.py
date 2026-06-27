@@ -650,4 +650,52 @@ async def test_local_user_updates_and_deletion(client, db_session):
         app.dependency_overrides.clear()
 
 
+@pytest.mark.asyncio
+async def test_provision_tenant(client, db_session):
+    """
+    Test platform admin manually provisioning a new tenant.
+    """
+    async def mock_platform_admin_auth():
+        return UserSession(
+            user_id="usr_provision_admin",
+            email="provision_admin@test.com",
+            tenant_id=None,
+            role="platform_admin"
+        )
+
+    admin_user = User(
+        clerk_user_id="usr_provision_admin",
+        email="provision_admin@test.com",
+        first_name="Provision",
+        last_name="Admin",
+        role="platform_admin",
+        status="active"
+    )
+    db_session.add(admin_user)
+    await db_session.commit()
+
+    app.dependency_overrides[require_auth] = mock_platform_admin_auth
+
+    try:
+        payload = {"name": "New Provisioned Tenant"}
+        response = await client.post("/api/v1/system/tenants", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["name"] == "New Provisioned Tenant"
+        assert data["slug"] == "new-provisioned-tenant"
+        assert data["status"] == "active"
+
+        # Verify in DB
+        stmt = select(Organization).where(Organization.id == data["id"])
+        res = await db_session.execute(stmt)
+        db_org = res.scalars().first()
+        assert db_org is not None
+        assert db_org.name == "New Provisioned Tenant"
+        assert db_org.access_config is not None
+        assert db_org.access_config["suppliers"] is True
+    finally:
+        app.dependency_overrides.clear()
+
+
+
 

@@ -23,7 +23,7 @@ from app.config import settings
 from app.core.storage import generate_presigned_upload_url, generate_presigned_download_url
 from app.modules.system.schemas import (
     DocumentCreate, PresignedUploadRequest, PresignedUploadResponse, DocumentResponse,
-    OrganizationAccessUpdate, OrganizationResponse, PlatformAnalyticsResponse, PlanCreate, PlanUpdate, PlanResponse, UserInviteRequest, UserResponse, UserAssignOrgRequest, UserUpdateRequest,
+    OrganizationCreate, OrganizationAccessUpdate, OrganizationResponse, PlatformAnalyticsResponse, PlanCreate, PlanUpdate, PlanResponse, UserInviteRequest, UserResponse, UserAssignOrgRequest, UserUpdateRequest,
     PlatformHistoryResponse, PlatformHistoryDataPoint, AuditLogResponse,
     OrganizationRequestCreate, OrganizationRequestResponse, OrganizationRequestAction,
     DepartmentCreate, DepartmentResponse, InvitationCreate, InvitationResponse,
@@ -639,6 +639,41 @@ async def list_tenants_alias(
     Alias for backwards compatibility with the admin portal.
     """
     return await list_organizations(db, current_user)
+
+@router.post("/tenants", response_model=OrganizationResponse)
+async def provision_tenant(
+    tenant_in: OrganizationCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSession = Depends(require_auth)
+):
+    """
+    Manually provision a new tenant/organization (Platform Admin view).
+    """
+    if not current_user.is_platform_admin:
+        raise HTTPException(status_code=403, detail="Only platform admins can provision tenants manually.")
+    
+    # Generate unique slug
+    slug = await get_unique_slug(db, tenant_in.name)
+
+    clerk_org_id = f"org_mock_{uuid.uuid4().hex[:8]}"
+
+    org = Organization(
+        name=tenant_in.name,
+        slug=slug,
+        clerk_org_id=clerk_org_id,
+        status="active",
+        access_config={
+            "suppliers": True,
+            "products": True,
+            "inventory": True,
+            "purchase_orders": True,
+            "finance": True,
+        }
+    )
+    db.add(org)
+    await db.commit()
+    await db.refresh(org)
+    return org
 
 @router.put("/organizations/{org_id}/access", response_model=OrganizationResponse)
 async def update_organization_access(

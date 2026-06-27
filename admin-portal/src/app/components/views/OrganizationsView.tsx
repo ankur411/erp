@@ -186,27 +186,28 @@ export default function OrganizationsView() {
 
     setProvisioning(true);
     try {
-      // Trigger local zustand action as sync
+      const res = await authFetch("/api/v1/system/tenants", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: provisionName.trim() }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ detail: "Failed to provision organization" }));
+        throw new Error(errData.detail || "Failed to provision organization");
+      }
+      const newOrg: Organization = await res.json();
+
+      // Sync with local Zustand store
       registerTenant(provisionName.trim());
 
-      // Simulate API call to build tenant
-      const mockNewOrg: Organization = {
-        id: `org-${Date.now()}`,
-        name: provisionName.trim(),
-        clerk_org_id: `org_${Math.random().toString(36).substr(2, 14)}`,
-        status: "active",
-        created_at: new Date().toISOString(),
-        access_config: { suppliers: true, products: true, inventory: true, purchase_orders: true, finance: true }
-      };
-
       // Add to React Query Cache
-      queryClient.setQueryData(["admin-tenants"], (old: any) => [...(old || []), mockNewOrg]);
+      queryClient.setQueryData(["admin-tenants"], (old: any) => [...(old || []), newOrg]);
       
       setProvisionName("");
       setShowProvisionModal(false);
-      alert(`Organization "${mockNewOrg.name}" provisioned successfully!`);
-    } catch (err) {
-      alert("Failed to provision organization");
+      alert(`Organization "${newOrg.name}" provisioned successfully!`);
+    } catch (err: any) {
+      alert("Failed to provision organization: " + err.message);
     } finally {
       setProvisioning(false);
     }

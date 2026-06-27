@@ -31,6 +31,9 @@ class DocumentResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+class OrganizationCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+
 class OrganizationAccessUpdate(BaseModel):
     suppliers: bool
     products: bool

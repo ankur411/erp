@@ -52,6 +52,10 @@ class UserSession:
         self.tenant_id = tenant_id
         self.role = role # Role within the organization
 
+    @property
+    def is_platform_admin(self) -> bool:
+        return self.role == "platform_admin"
+
 async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(security_scheme),
     x_api_key: Optional[str] = Security(api_key_header),
