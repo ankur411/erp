@@ -32,8 +32,10 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), nullable=False)
     first_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     last_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    role: Mapped[str] = mapped_column(String(50), nullable=False) # Role in system
+    role: Mapped[str] = mapped_column(String(50), nullable=False) # Role in system: org:admin, org:member, platform_admin
+    status: Mapped[str] = mapped_column(String(50), default="active", nullable=False) # active | inactive
     department_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("organization_departments.id"), nullable=True)
+    last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     organization: Mapped[Organization] = relationship("Organization", back_populates="users")

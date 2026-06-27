@@ -26,7 +26,8 @@ from app.modules.system.schemas import (
     OrganizationAccessUpdate, OrganizationResponse, PlatformAnalyticsResponse, PlanCreate, PlanUpdate, PlanResponse, UserInviteRequest, UserResponse,
     PlatformHistoryResponse, PlatformHistoryDataPoint, AuditLogResponse,
     OrganizationRequestCreate, OrganizationRequestResponse, OrganizationRequestAction,
-    DepartmentCreate, DepartmentResponse, InvitationCreate, InvitationResponse
+    DepartmentCreate, DepartmentResponse, InvitationCreate, InvitationResponse,
+    AuthMeResponse, ClerkSyncResult, MakeAdminRequest
 )
 
 def slugify(text: str) -> str:
@@ -164,6 +165,365 @@ async def clerk_webhook(
             await db.commit()
 
     return {"status": "processed"}
+
+
+# ==============================================================================
+# AUTH/ME — Role-based redirect decision endpoint
+# ==============================================================================
+
+@router.post("/auth/me", response_model=AuthMeResponse, status_code=status.HTTP_200_OK)
+async def auth_me(
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSession = Depends(require_auth)
+):
+    """
+    Called immediately after Clerk login by both the frontend and admin-portal.
+    Looks up the user in TiDB, upserts if first login, updates last_login_at,
+    and returns the role + org context the frontend needs to decide where to redirect.
+    """
+    clerk_user_id = current_user.user_id
+    clerk_org_id = current_user.tenant_id  # May be None if no org in JWT
+    
+    # 1. Look up user in TiDB
+    user_stmt = select(User).where(User.clerk_user_id == clerk_user_id).execution_options(skip_tenant_filter=True)
+    user_res = await db.execute(user_stmt)
+    user = user_res.scalars().first()
+    
+    org = None
+
+    # 2. If user exists, update last_login_at and return full context
+    if user:
+        user.last_login_at = datetime.utcnow()
+        # Also update email if it changed in Clerk
+        if current_user.email:
+            user.email = current_user.email
+        await db.commit()
+        await db.refresh(user)
+        
+        # Fetch their organization
+        if user.tenant_id:
+            org_stmt = select(Organization).where(Organization.id == user.tenant_id)
+            org_res = await db.execute(org_stmt)
+            org = org_res.scalars().first()
+        
+        return AuthMeResponse(
+            user_id=user.id,
+            clerk_user_id=user.clerk_user_id,
+            email=user.email,
+            role=user.role,
+            org_id=org.id if org else None,
+            org_slug=org.slug if org else None,
+            clerk_org_id=org.clerk_org_id if org else None,
+            status=user.status,
+            is_platform_admin=(user.role == "platform_admin")
+        )
+    
+    # 3. First login — try to resolve org from Clerk JWT context
+    if clerk_org_id:
+        org_stmt = select(Organization).where(Organization.clerk_org_id == clerk_org_id)
+        org_res = await db.execute(org_stmt)
+        org = org_res.scalars().first()
+        
+        if not org:
+            # Auto-create org record if missing
+            slug = await get_unique_slug(db, clerk_org_id)
+            org = Organization(
+                name=clerk_org_id,  # Will be corrected by webhook
+                slug=slug,
+                clerk_org_id=clerk_org_id,
+                status="active"
+            )
+            db.add(org)
+            await db.flush()
+    
+    # 4. Create user record on first login
+    role = current_user.role or "org:member"
+    if not org:
+        # No org — set a placeholder tenant_id; user lands on /no-organization
+        # We need a valid org to satisfy the FK constraint.
+        # For org-less users we do NOT create a DB record yet — return early.
+        return AuthMeResponse(
+            user_id="",
+            clerk_user_id=clerk_user_id,
+            email=current_user.email or "",
+            role=role,
+            org_id=None,
+            org_slug=None,
+            clerk_org_id=None,
+            status="active",
+            is_platform_admin=False
+        )
+    
+    new_user = User(
+        tenant_id=org.id,
+        clerk_user_id=clerk_user_id,
+        email=current_user.email or "",
+        role=role,
+        status="active",
+        last_login_at=datetime.utcnow()
+    )
+    db.add(new_user)
+    await db.commit()
+    await db.refresh(new_user)
+    await db.refresh(org)
+    
+    return AuthMeResponse(
+        user_id=new_user.id,
+        clerk_user_id=new_user.clerk_user_id,
+        email=new_user.email,
+        role=new_user.role,
+        org_id=org.id,
+        org_slug=org.slug,
+        clerk_org_id=org.clerk_org_id,
+        status=new_user.status,
+        is_platform_admin=(new_user.role == "platform_admin")
+    )
+
+
+# ==============================================================================
+# ADMIN: CLERK USER SYNC
+# ==============================================================================
+
+def _is_platform_admin_user(current_user: UserSession) -> bool:
+    """Check if the current user session is a platform admin (role stored in TiDB, not JWT)."""
+    # The JWT role may be org:admin — actual platform_admin check happens against DB.
+    # For the sync endpoint we accept either the role claim or rely on the caller having
+    # set up their token. The DB-level check is done inside the endpoint.
+    return True  # Actual role is verified inside the endpoint via DB lookup.
+
+
+@router.post("/admin/sync-clerk-users", response_model=ClerkSyncResult, status_code=status.HTTP_200_OK)
+async def sync_clerk_users(
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSession = Depends(require_auth)
+):
+    """
+    Synchronize all Clerk users into TiDB.
+    - Fetches all users from Clerk Backend API (paginated).
+    - Upserts records in TiDB users table.
+    - Resolves org membership from Clerk organization memberships.
+    - Protected: caller must have platform_admin role in TiDB.
+    """
+    # 1. Verify caller is platform_admin in TiDB
+    caller_stmt = select(User).where(User.clerk_user_id == current_user.user_id).execution_options(skip_tenant_filter=True)
+    caller_res = await db.execute(caller_stmt)
+    caller = caller_res.scalars().first()
+    if not caller or caller.role != "platform_admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only Platform Admins can trigger user synchronization."
+        )
+    
+    if not settings.CLERK_SECRET_KEY or settings.CLERK_SECRET_KEY.startswith("mock"):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Clerk Secret Key is not configured. Cannot sync users."
+        )
+
+    headers = {
+        "Authorization": f"Bearer {settings.CLERK_SECRET_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    created = 0
+    updated = 0
+    skipped = 0
+    errors = 0
+    error_details = []
+    offset = 0
+    page_limit = 100
+
+    while True:
+        try:
+            resp = requests.get(
+                f"https://api.clerk.com/v1/users?limit={page_limit}&offset={offset}",
+                headers=headers,
+                timeout=15
+            )
+            if resp.status_code != 200:
+                error_details.append(f"Clerk API error at offset {offset}: {resp.status_code} {resp.text[:200]}")
+                break
+            
+            clerk_users = resp.json()
+            if not clerk_users:
+                break
+            
+            for cu in clerk_users:
+                try:
+                    clerk_user_id = cu.get("id")
+                    email_addresses = cu.get("email_addresses", [])
+                    email = email_addresses[0].get("email_address", "") if email_addresses else ""
+                    first_name = cu.get("first_name") or ""
+                    last_name = cu.get("last_name") or ""
+                    # Convert Clerk epoch timestamps (milliseconds) to datetime
+                    created_at_ms = cu.get("created_at")
+                    last_sign_in_ms = cu.get("last_sign_in_at")
+                    created_at_dt = datetime.utcfromtimestamp(created_at_ms / 1000) if created_at_ms else None
+                    last_login_dt = datetime.utcfromtimestamp(last_sign_in_ms / 1000) if last_sign_in_ms else None
+
+                    # Resolve org membership from Clerk
+                    org_memberships_resp = requests.get(
+                        f"https://api.clerk.com/v1/users/{clerk_user_id}/organization_memberships",
+                        headers=headers,
+                        timeout=10
+                    )
+                    clerk_org_id = None
+                    clerk_role = "org:member"
+                    if org_memberships_resp.status_code == 200:
+                        memberships = org_memberships_resp.json().get("data", [])
+                        if memberships:
+                            first_membership = memberships[0]
+                            clerk_org_id = first_membership.get("organization", {}).get("id")
+                            clerk_role = first_membership.get("role", "org:member")
+
+                    # Find or create organization in TiDB
+                    org_id = None
+                    if clerk_org_id:
+                        org_stmt = select(Organization).where(Organization.clerk_org_id == clerk_org_id)
+                        org_res = await db.execute(org_stmt)
+                        org = org_res.scalars().first()
+                        if org:
+                            org_id = org.id
+                        else:
+                            # Fetch org details from Clerk
+                            org_resp = requests.get(
+                                f"https://api.clerk.com/v1/organizations/{clerk_org_id}",
+                                headers=headers, timeout=10
+                            )
+                            org_name = clerk_org_id
+                            if org_resp.status_code == 200:
+                                org_name = org_resp.json().get("name", clerk_org_id)
+                            slug = await get_unique_slug(db, org_name)
+                            new_org = Organization(
+                                name=org_name,
+                                slug=slug,
+                                clerk_org_id=clerk_org_id,
+                                status="active"
+                            )
+                            db.add(new_org)
+                            await db.flush()
+                            await db.refresh(new_org)
+                            org_id = new_org.id
+
+                    # Upsert user
+                    existing_stmt = select(User).where(User.clerk_user_id == clerk_user_id).execution_options(skip_tenant_filter=True)
+                    existing_res = await db.execute(existing_stmt)
+                    existing_user = existing_res.scalars().first()
+
+                    if existing_user:
+                        # Update existing record
+                        existing_user.email = email
+                        existing_user.first_name = first_name
+                        existing_user.last_name = last_name
+                        if last_login_dt:
+                            existing_user.last_login_at = last_login_dt
+                        # Do NOT overwrite platform_admin role during sync
+                        if existing_user.role != "platform_admin":
+                            existing_user.role = clerk_role
+                        if org_id and existing_user.tenant_id != org_id:
+                            existing_user.tenant_id = org_id
+                        updated += 1
+                    elif org_id:
+                        # Create new record only if we have a valid org
+                        new_user = User(
+                            tenant_id=org_id,
+                            clerk_user_id=clerk_user_id,
+                            email=email,
+                            first_name=first_name,
+                            last_name=last_name,
+                            role=clerk_role,
+                            status="active",
+                            last_login_at=last_login_dt,
+                            created_at=created_at_dt or datetime.utcnow()
+                        )
+                        db.add(new_user)
+                        created += 1
+                    else:
+                        # No org — skip (user has not joined an organization)
+                        skipped += 1
+                    
+                    await db.flush()
+                except Exception as e:
+                    errors += 1
+                    error_details.append(f"Error syncing user {cu.get('id', '?')}: {str(e)[:200]}")
+            
+            await db.commit()
+            
+            if len(clerk_users) < page_limit:
+                break
+            offset += page_limit
+            
+        except Exception as e:
+            error_details.append(f"Network error at offset {offset}: {str(e)[:200]}")
+            break
+    
+    total_synced = created + updated
+    return ClerkSyncResult(
+        synced=total_synced,
+        created=created,
+        updated=updated,
+        skipped=skipped,
+        errors=errors,
+        error_details=error_details[:10]  # Cap error list
+    )
+
+
+@router.post("/admin/make-admin", status_code=status.HTTP_200_OK)
+async def make_platform_admin(
+    payload: MakeAdminRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSession = Depends(require_auth)
+):
+    """
+    Promote a user to platform_admin by their Clerk user ID.
+    This is how the first platform admin is bootstrapped, or how
+    additional platform admins are added.
+    
+    For the initial bootstrap, call this endpoint after first login
+    using the Clerk user ID shown in the Clerk dashboard.
+    Subsequent calls require the caller to be a platform_admin themselves.
+    """
+    # Count existing platform admins
+    admin_count_stmt = select(func.count(User.id)).where(
+        User.role == "platform_admin"
+    ).execution_options(skip_tenant_filter=True)
+    admin_count_res = await db.execute(admin_count_stmt)
+    existing_admin_count = admin_count_res.scalar() or 0
+    
+    # If admins exist, verify the caller is one of them
+    if existing_admin_count > 0:
+        caller_stmt = select(User).where(User.clerk_user_id == current_user.user_id).execution_options(skip_tenant_filter=True)
+        caller_res = await db.execute(caller_stmt)
+        caller = caller_res.scalars().first()
+        if not caller or caller.role != "platform_admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only existing Platform Admins can promote new admins. For initial bootstrap, create the first user record via /auth/me first."
+            )
+    
+    # Find the target user
+    target_stmt = select(User).where(User.clerk_user_id == payload.clerk_user_id).execution_options(skip_tenant_filter=True)
+    target_res = await db.execute(target_stmt)
+    target = target_res.scalars().first()
+    
+    if not target:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with clerk_user_id '{payload.clerk_user_id}' not found in TiDB. They must log in once via /auth/me first to create their record."
+        )
+    
+    old_role = target.role
+    target.role = "platform_admin"
+    await db.commit()
+    
+    return {
+        "status": "success",
+        "message": f"User {payload.clerk_user_id} promoted to platform_admin.",
+        "previous_role": old_role,
+        "new_role": "platform_admin",
+        "user_email": target.email
+    }
+
 
 
 # --- DOCUMENT MANAGEMENT (Cloudflare R2 Integration) ---

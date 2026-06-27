@@ -113,9 +113,41 @@ class UserResponse(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     role: str
+    status: str = "active"
+    last_login_at: Optional[datetime] = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# --- AUTH / REDIRECT SCHEMAS ---
+
+class AuthMeResponse(BaseModel):
+    """Returned by POST /auth/me — tells the frontend where to redirect."""
+    user_id: str           # TiDB internal UUID
+    clerk_user_id: str
+    email: str
+    role: str              # platform_admin | org:admin | org:member | etc.
+    org_id: Optional[str] = None    # TiDB Organization.id (not Clerk org ID)
+    org_slug: Optional[str] = None
+    clerk_org_id: Optional[str] = None
+    status: str = "active"
+    is_platform_admin: bool = False
+
+
+class ClerkSyncResult(BaseModel):
+    """Summary returned by POST /admin/sync-clerk-users."""
+    synced: int
+    created: int
+    updated: int
+    skipped: int
+    errors: int
+    error_details: list[str] = []
+
+
+class MakeAdminRequest(BaseModel):
+    """Promote a Clerk user to platform_admin role."""
+    clerk_user_id: str
 
 
 class ApiKeyCreate(BaseModel):
