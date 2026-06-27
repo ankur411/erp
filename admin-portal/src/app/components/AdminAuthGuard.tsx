@@ -1,12 +1,10 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { useAuth } from "@clerk/nextjs";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const CLIENT_PORTAL_URL =
   process.env.NEXT_PUBLIC_CLIENT_PORTAL_URL || "https://erp-delta-hazel.vercel.app";
-const isClerkConfigured = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
 
 type GuardState = "checking" | "authorized" | "unauthorized" | "error";
 
@@ -21,13 +19,11 @@ export default function AdminAuthGuard({
 }: {
   children: React.ReactNode;
 }) {
-  const clerkAuth = isClerkConfigured ? useAuth() : null;
   const [state, setGuardState] = useState<GuardState>("checking");
   const [errorMsg, setErrorMsg] = useState("");
   const checked = useRef(false);
 
   useEffect(() => {
-    if (isClerkConfigured && clerkAuth && !clerkAuth.isLoaded) return;
     if (checked.current) return;
     checked.current = true;
 
@@ -35,32 +31,17 @@ export default function AdminAuthGuard({
       ? (localStorage.getItem("auth_token") || document.cookie.match(/auth_token=([^;]+)/)?.[1] || null)
       : null;
 
-    if (isClerkConfigured && clerkAuth && !clerkAuth.isSignedIn) {
-      window.location.href = "/sign-in";
-      return;
-    }
-
-    if (!isClerkConfigured && !localToken) {
+    if (!localToken) {
       window.location.href = "/sign-in";
       return;
     }
 
     async function checkAdmin() {
       try {
-        let finalToken = localToken;
-        if (isClerkConfigured && clerkAuth) {
-          finalToken = await clerkAuth.getToken();
-        }
-
-        if (!finalToken) {
-          window.location.href = "/sign-in";
-          return;
-        }
-
         const res = await fetch(`${API_URL}/api/v1/system/auth/me`, {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${finalToken}`,
+            Authorization: `Bearer ${localToken}`,
             "Content-Type": "application/json",
           },
         });
@@ -83,10 +64,8 @@ export default function AdminAuthGuard({
           setGuardState("error");
         } else if (res.status === 401) {
           // Token is unauthorized or expired, clear it and redirect to login
-          if (!isClerkConfigured) {
-            document.cookie = "auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax";
-            localStorage.removeItem("auth_token");
-          }
+          document.cookie = "auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax";
+          localStorage.removeItem("auth_token");
           window.location.href = "/sign-in";
         } else {
           setErrorMsg(`Backend error: ${res.status}`);
@@ -102,7 +81,7 @@ export default function AdminAuthGuard({
     }
 
     checkAdmin();
-  }, [clerkAuth?.isLoaded, clerkAuth?.isSignedIn]);
+  }, []);
 
   // ── Loading ──────────────────────────────────────────────────────────────
   if (state === "checking") {
