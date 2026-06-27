@@ -37,8 +37,8 @@ export default function SignInPage() {
       const data = await response.json();
       
       // Store token in cookie (for middleware) and localStorage (for API helper)
-      document.cookie = `auth_token=${data.access_token}; path=/; max-age=86400; SameSite=Lax`;
-      localStorage.setItem("auth_token", data.access_token);
+      document.cookie = `auth_token=${data.token}; path=/; max-age=86400; SameSite=Lax`;
+      localStorage.setItem("auth_token", data.token);
       
       // Redirect to home/dashboard
       router.push("/");

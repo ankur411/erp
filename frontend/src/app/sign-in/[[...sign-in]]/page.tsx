@@ -40,16 +40,16 @@ export default function SignInPage() {
       const data = await response.json();
       
       // Store token in cookie (for middleware) and localStorage (for client-side)
-      document.cookie = `auth_token=${data.access_token}; path=/; max-age=86400; SameSite=Lax`;
-      localStorage.setItem("auth_token", data.access_token);
+      document.cookie = `auth_token=${data.token}; path=/; max-age=86400; SameSite=Lax`;
+      localStorage.setItem("auth_token", data.token);
       
       // Redirect based on user role and organization status
-      if (data.user.is_platform_admin) {
+      if (data.is_platform_admin) {
         window.location.href = ADMIN_PORTAL_URL;
         return;
       }
 
-      if (data.user.org_id) {
+      if (data.org_id) {
         router.push("/dashboard");
       } else {
         router.push("/no-organization");
