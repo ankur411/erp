@@ -4,6 +4,7 @@ import React, { useState, useEffect, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useERPStore } from "@/lib/store";
 import AdminLayout from "./components/AdminLayout";
+import AdminAuthGuard from "./components/AdminAuthGuard";
 
 // Import core modular sub-views
 import DashboardView from "./components/views/DashboardView";
@@ -139,7 +140,9 @@ export default function AdminPortalPage() {
         </div>
       </div>
     }>
-      <AdminPortalPageContent />
+      <AdminAuthGuard>
+        <AdminPortalPageContent />
+      </AdminAuthGuard>
     </Suspense>
   );
 }
