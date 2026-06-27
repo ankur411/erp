@@ -135,6 +135,25 @@ export default function UsersView() {
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
 
+  const [selectedUserForAssign, setSelectedUserForAssign] = useState<User | null>(null);
+  const [assignForm, setAssignForm] = useState({
+    tenant_id: "",
+    role: "org:member",
+  });
+  const [assignStatus, setAssignStatus] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
+
+  const handleOpenAssignModal = (user: User) => {
+    setSelectedUserForAssign(user);
+    setAssignForm({
+      tenant_id: user.tenant_id || "",
+      role: user.role || "org:member",
+    });
+    setAssignStatus(null);
+  };
+
   // Fetch live users
   const {
     data: users = [],
@@ -210,6 +229,36 @@ export default function UsersView() {
     },
     onError: (err: Error) => {
       setInviteStatus({ type: "error", message: err.message });
+    },
+  });
+
+  // Assign organization mutation
+  const assignMutation = useMutation({
+    mutationFn: async ({ userId, tenant_id, role }: { userId: string; tenant_id: string; role: string }) => {
+      const res = await authFetch(`/api/v1/system/users/${userId}/assign-organization`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tenant_id: tenant_id || null, role }),
+      });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.detail || "Failed to assign organization");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+      setAssignStatus({
+        type: "success",
+        message: "Organization and role updated successfully!",
+      });
+      setTimeout(() => {
+        setSelectedUserForAssign(null);
+        setAssignStatus(null);
+      }, 2000);
+    },
+    onError: (err: Error) => {
+      setAssignStatus({ type: "error", message: err.message });
     },
   });
 
@@ -401,13 +450,16 @@ export default function UsersView() {
                       <Calendar className="h-3 w-3" /> Created
                     </div>
                   </th>
+                  <th className="px-5 py-3.5 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-850">
                 {filteredUsers.map((user) => {
                   const initials = `${user.first_name?.[0] || ""}${user.last_name?.[0] || ""}`.toUpperCase() || "?";
                   const orgName =
-                    tenants.find((t) => t.id === user.tenant_id)?.name || "—";
+                    tenants.find((t) => t.id === user.tenant_id)?.name || (
+                      <span className="text-slate-400 italic">Unassigned</span>
+                    );
                   return (
                     <tr
                       key={user.id}
@@ -467,6 +519,16 @@ export default function UsersView() {
                       {/* Created */}
                       <td className="px-5 py-3.5 text-slate-400 whitespace-nowrap">
                         {formatDate(user.created_at)}
+                      </td>
+
+                      {/* Actions */}
+                      <td className="px-5 py-3.5 text-right whitespace-nowrap">
+                        <button
+                          onClick={() => handleOpenAssignModal(user)}
+                          className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg text-[11px] font-bold transition-all border border-slate-200 dark:border-slate-750"
+                        >
+                          Change Org
+                        </button>
                       </td>
                     </tr>
                   );
@@ -618,6 +680,121 @@ export default function UsersView() {
                     className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold transition-all shadow-md shadow-blue-500/10 flex items-center gap-1.5"
                   >
                     {inviteMutation.isPending ? "Inviting…" : "Send Invitation"}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Assign Organization Modal */}
+      <AnimatePresence>
+        {selectedUserForAssign && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.5 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                if (!assignMutation.isPending) setSelectedUserForAssign(null);
+              }}
+              className="fixed inset-0 z-40 bg-black"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-880 rounded-2xl p-6 shadow-xl z-50 space-y-4"
+            >
+              <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-850 pb-3">
+                <div className="flex items-center gap-2">
+                  <Building className="h-5 w-5 text-blue-600" />
+                  <span className="font-bold text-sm">Assign Organization & Role</span>
+                </div>
+                <button
+                  onClick={() => setSelectedUserForAssign(null)}
+                  className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="text-xs text-slate-500 bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-850 space-y-1">
+                <p><strong>User:</strong> {selectedUserForAssign.first_name ? `${selectedUserForAssign.first_name} ${selectedUserForAssign.last_name || ""}` : "—"}</p>
+                <p><strong>Email:</strong> {selectedUserForAssign.email}</p>
+              </div>
+
+              {assignStatus && (
+                <div
+                  className={`p-3 rounded-xl border flex items-start gap-2 text-xs leading-normal ${
+                    assignStatus.type === "success"
+                      ? "bg-emerald-50 border-emerald-200 text-emerald-850 dark:bg-emerald-950/20 dark:border-emerald-900/30 dark:text-emerald-400"
+                      : "bg-red-50 border-red-200 text-red-850 dark:bg-red-950/20 dark:border-red-900/30 dark:text-red-400"
+                  }`}
+                >
+                  {assignStatus.type === "success" ? (
+                    <CheckCircle className="h-4 w-4 shrink-0 mt-0.5 text-emerald-600" />
+                  ) : (
+                    <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-red-650" />
+                  )}
+                  <span>{assignStatus.message}</span>
+                </div>
+              )}
+
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  assignMutation.mutate({
+                    userId: selectedUserForAssign.id,
+                    tenant_id: assignForm.tenant_id,
+                    role: assignForm.role,
+                  });
+                }}
+                className="space-y-4 text-xs"
+              >
+                <div className="space-y-1.5">
+                  <label className="font-semibold text-slate-650 dark:text-slate-400">Target Workspace / Organization</label>
+                  <select
+                    value={assignForm.tenant_id}
+                    onChange={(e) => setAssignForm({ ...assignForm, tenant_id: e.target.value })}
+                    className="w-full border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-1 focus:ring-blue-600 font-semibold"
+                  >
+                    <option value="">— Unassigned (No Organization) —</option>
+                    {tenants.map((t) => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="font-semibold text-slate-650 dark:text-slate-400">Security Role</label>
+                  <select
+                    value={assignForm.role}
+                    onChange={(e) => setAssignForm({ ...assignForm, role: e.target.value })}
+                    className="w-full border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-1 focus:ring-blue-600 font-semibold"
+                  >
+                    <option value="org:member">Organization Member</option>
+                    <option value="org:admin">Organization Admin</option>
+                    <option value="platform_admin">Platform Admin</option>
+                  </select>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-850">
+                  <button
+                    type="button"
+                    disabled={assignMutation.isPending}
+                    onClick={() => setSelectedUserForAssign(null)}
+                    className="px-4 py-2 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 rounded-xl font-bold"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={assignMutation.isPending}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold transition-all shadow-md shadow-blue-500/10 flex items-center gap-1.5"
+                  >
+                    {assignMutation.isPending ? "Saving…" : "Save Changes"}
                   </button>
                 </div>
               </form>

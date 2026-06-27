@@ -23,7 +23,7 @@ from app.config import settings
 from app.core.storage import generate_presigned_upload_url, generate_presigned_download_url
 from app.modules.system.schemas import (
     DocumentCreate, PresignedUploadRequest, PresignedUploadResponse, DocumentResponse,
-    OrganizationAccessUpdate, OrganizationResponse, PlatformAnalyticsResponse, PlanCreate, PlanUpdate, PlanResponse, UserInviteRequest, UserResponse,
+    OrganizationAccessUpdate, OrganizationResponse, PlatformAnalyticsResponse, PlanCreate, PlanUpdate, PlanResponse, UserInviteRequest, UserResponse, UserAssignOrgRequest,
     PlatformHistoryResponse, PlatformHistoryDataPoint, AuditLogResponse,
     OrganizationRequestCreate, OrganizationRequestResponse, OrganizationRequestAction,
     DepartmentCreate, DepartmentResponse, InvitationCreate, InvitationResponse,
@@ -238,26 +238,12 @@ async def auth_me(
     
     # 4. Create user record on first login
     role = current_user.role or "org:member"
-    if not org:
-        # No org — set a placeholder tenant_id; user lands on /no-organization
-        # We need a valid org to satisfy the FK constraint.
-        # For org-less users we do NOT create a DB record yet — return early.
-        return AuthMeResponse(
-            user_id="",
-            clerk_user_id=clerk_user_id,
-            email=current_user.email or "",
-            role=role,
-            org_id=None,
-            org_slug=None,
-            clerk_org_id=None,
-            status="active",
-            is_platform_admin=False
-        )
-    
     new_user = User(
-        tenant_id=org.id,
+        tenant_id=org.id if org else None,
         clerk_user_id=clerk_user_id,
         email=current_user.email or "",
+        first_name=current_user.email.split("@")[0] if current_user.email else "",
+        last_name="",
         role=role,
         status="active",
         last_login_at=datetime.utcnow()
@@ -265,18 +251,17 @@ async def auth_me(
     db.add(new_user)
     await db.commit()
     await db.refresh(new_user)
-    await db.refresh(org)
     
     return AuthMeResponse(
         user_id=new_user.id,
-        clerk_user_id=new_user.clerk_user_id,
+        clerk_user_id=clerk_user_id,
         email=new_user.email,
-        role=new_user.role,
-        org_id=org.id,
-        org_slug=org.slug,
-        clerk_org_id=org.clerk_org_id,
+        role=role,
+        org_id=org.id if org else None,
+        org_slug=org.slug if org else None,
+        clerk_org_id=org.clerk_org_id if org else None,
         status=new_user.status,
-        is_platform_admin=(new_user.role == "platform_admin")
+        is_platform_admin=(role == "platform_admin")
     )
 
 
@@ -420,11 +405,11 @@ async def sync_clerk_users(
                         # Do NOT overwrite platform_admin role during sync
                         if existing_user.role != "platform_admin":
                             existing_user.role = clerk_role
-                        if org_id and existing_user.tenant_id != org_id:
+                        if existing_user.tenant_id != org_id:
                             existing_user.tenant_id = org_id
                         updated += 1
-                    elif org_id:
-                        # Create new record only if we have a valid org
+                    else:
+                        # Create new record (tenant_id can be None/nullable)
                         new_user = User(
                             tenant_id=org_id,
                             clerk_user_id=clerk_user_id,
@@ -438,9 +423,6 @@ async def sync_clerk_users(
                         )
                         db.add(new_user)
                         created += 1
-                    else:
-                        # No org — skip (user has not joined an organization)
-                        skipped += 1
                     
                     await db.flush()
                 except Exception as e:
@@ -929,6 +911,74 @@ async def list_users(
     stmt = select(User).execution_options(skip_tenant_filter=True)
     res = await db.execute(stmt)
     return res.scalars().all()
+
+@router.post("/users/{user_id}/assign-organization", response_model=UserResponse)
+async def assign_user_organization(
+    user_id: str,
+    req: UserAssignOrgRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSession = Depends(require_auth)
+):
+    """
+    Assign a user to an organization and set their role (Admin-only).
+    - Updates local database
+    - Updates Clerk organization membership
+    """
+    # 1. Verify caller is platform admin
+    admin_stmt = select(User).where(User.clerk_user_id == current_user.user_id, User.role == "platform_admin").execution_options(skip_tenant_filter=True)
+    admin_res = await db.execute(admin_stmt)
+    if not admin_res.scalars().first():
+        if current_user.role != "platform_admin":
+            raise HTTPException(status_code=403, detail="Only platform admins can perform this action")
+
+    # 2. Fetch the target user
+    user_stmt = select(User).where(User.id == user_id).execution_options(skip_tenant_filter=True)
+    user_res = await db.execute(user_stmt)
+    user = user_res.scalars().first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # 3. If organization is specified, verify it exists
+    org = None
+    if req.tenant_id:
+        org_stmt = select(Organization).where(Organization.id == req.tenant_id)
+        org_res = await db.execute(org_stmt)
+        org = org_res.scalars().first()
+        if not org:
+            raise HTTPException(status_code=404, detail="Target organization not found")
+
+    # 4. Update local DB
+    user.tenant_id = req.tenant_id
+    user.role = req.role
+    await db.commit()
+    await db.refresh(user)
+
+    # 5. Update Clerk organization membership if Clerk is configured
+    if org and org.clerk_org_id and settings.CLERK_SECRET_KEY and not settings.CLERK_SECRET_KEY.startswith("mock") and settings.CLERK_SECRET_KEY != "":
+        # Determine clerk role
+        clerk_role = "org:member"
+        if req.role in ["Super Admin", "Organization Owner", "org:admin"]:
+            clerk_role = "org:admin"
+        
+        membership_payload = {
+            "user_id": user.clerk_user_id,
+            "role": clerk_role
+        }
+        headers = {
+            "Authorization": f"Bearer {settings.CLERK_SECRET_KEY}",
+            "Content-Type": "application/json"
+        }
+        try:
+            requests.post(
+                f"https://api.clerk.com/v1/organizations/{org.clerk_org_id}/memberships",
+                json=membership_payload,
+                headers=headers,
+                timeout=10
+            )
+        except Exception:
+            pass
+
+    return user
 
 # --- USER INVITATION SYSTEM ---
 

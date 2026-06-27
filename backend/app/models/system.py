@@ -27,7 +27,7 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
-    tenant_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=False)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True)
     clerk_user_id: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     email: Mapped[str] = mapped_column(String(255), nullable=False)
     first_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)

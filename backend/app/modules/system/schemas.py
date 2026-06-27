@@ -107,7 +107,7 @@ class UserInviteRequest(BaseModel):
 
 class UserResponse(BaseModel):
     id: str
-    tenant_id: str
+    tenant_id: Optional[str] = None
     clerk_user_id: str
     email: str
     first_name: Optional[str] = None
@@ -117,8 +117,9 @@ class UserResponse(BaseModel):
     last_login_at: Optional[datetime] = None
     created_at: datetime
 
-    model_config = ConfigDict(from_attributes=True)
-
+class UserAssignOrgRequest(BaseModel):
+    tenant_id: Optional[str] = None
+    role: str
 
 # --- AUTH / REDIRECT SCHEMAS ---
 
