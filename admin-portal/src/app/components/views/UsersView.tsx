@@ -427,7 +427,6 @@ export default function UsersView() {
                 <tr className="border-b border-slate-250 dark:border-slate-850 bg-slate-50/50 dark:bg-slate-900/50 text-[10px] font-bold uppercase tracking-wider text-slate-450 dark:text-slate-500">
                   <th className="px-5 py-3.5">User</th>
                   <th className="px-5 py-3.5">Email</th>
-                  <th className="px-5 py-3.5">User ID</th>
                   <th className="px-5 py-3.5">Organization</th>
                   <th className="px-5 py-3.5">
                     <div className="flex items-center gap-1">
@@ -479,13 +478,6 @@ export default function UsersView() {
                       {/* Email */}
                       <td className="px-5 py-3.5 font-semibold text-slate-650 dark:text-slate-350 max-w-[180px] truncate">
                         {user.email}
-                      </td>
-
-                      {/* User ID */}
-                      <td className="px-5 py-3.5">
-                        <span className="font-mono text-[9px] text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">
-                          {user.id}
-                        </span>
                       </td>
 
                       {/* Organization */}
