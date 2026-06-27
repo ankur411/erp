@@ -45,10 +45,22 @@ import {
   Cell
 } from "recharts";
 import { useERPStore, Supplier, Product, PurchaseOrder, Invoice, Payment } from "@/lib/store";
+import { useAuth } from "@clerk/nextjs";
+import { useRouter } from "next/navigation";
 
 type TabType = "dashboard" | "suppliers" | "products" | "inventory" | "purchase" | "finance" | "tenant_control";
 
 export default function DashboardPage() {
+  const { isLoaded, orgId } = useAuth();
+  const router = useRouter();
+
+  React.useEffect(() => {
+    const isClerkEnabled = typeof window !== "undefined" && (!!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY || window.location.hostname.includes("localhost"));
+    if (isClerkEnabled && isLoaded && !orgId) {
+      router.push("/no-organization");
+    }
+  }, [isLoaded, orgId, router]);
+
   const adminPortalUrl = process.env.NEXT_PUBLIC_ADMIN_PORTAL_URL;
   const [activeTab, setActiveTab] = useState<TabType>("dashboard");
   const [darkMode, setDarkMode] = useState<boolean>(false);

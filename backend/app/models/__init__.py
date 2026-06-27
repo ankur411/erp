@@ -1,5 +1,8 @@
 from app.database import Base
-from app.models.system import Organization, User, AuditLog, Document, ApiKey
+from app.models.system import (
+    Organization, User, AuditLog, Document, ApiKey,
+    OrganizationRequest, OrganizationDepartment, OrganizationInvitation
+)
 from app.models.supplier import Supplier
 from app.models.inventory import Category, Product, Warehouse, Inventory, InventoryLedger
 from app.models.purchase import PurchaseOrder, PurchaseOrderItem
@@ -24,5 +27,8 @@ __all__ = [
     "Invoice",
     "Payment",
     "ImportJob",
-    "ImportLog"
+    "ImportLog",
+    "OrganizationRequest",
+    "OrganizationDepartment",
+    "OrganizationInvitation"
 ]

@@ -11,7 +11,10 @@ import re
 from sqlalchemy import func
 from app.database import get_db, tenant_context
 from app.core.auth import require_auth, require_org, RequireRole, UserSession
-from app.models.system import Organization, User, Document, AuditLog, Plan
+from app.models.system import (
+    Organization, User, Document, AuditLog, Plan, ApiKey,
+    OrganizationRequest, OrganizationDepartment, OrganizationInvitation
+)
 from app.models.supplier import Supplier
 from app.models.purchase import PurchaseOrder
 from app.models.finance import Payment
@@ -21,7 +24,9 @@ from app.core.storage import generate_presigned_upload_url, generate_presigned_d
 from app.modules.system.schemas import (
     DocumentCreate, PresignedUploadRequest, PresignedUploadResponse, DocumentResponse,
     OrganizationAccessUpdate, OrganizationResponse, PlatformAnalyticsResponse, PlanCreate, PlanUpdate, PlanResponse, UserInviteRequest, UserResponse,
-    PlatformHistoryResponse, PlatformHistoryDataPoint, AuditLogResponse
+    PlatformHistoryResponse, PlatformHistoryDataPoint, AuditLogResponse,
+    OrganizationRequestCreate, OrganizationRequestResponse, OrganizationRequestAction,
+    DepartmentCreate, DepartmentResponse, InvitationCreate, InvitationResponse
 )
 
 def slugify(text: str) -> str:
@@ -783,6 +788,425 @@ async def revoke_api_key(
         raise HTTPException(status_code=404, detail="API key not found")
 
     await db.delete(api_key_obj)
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --- ORGANIZATION REQUESTS ---
+
+@router.post("/organization-requests", response_model=OrganizationRequestResponse, status_code=status.HTTP_201_CREATED)
+async def create_organization_request(
+    request_in: OrganizationRequestCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSession = Depends(require_auth)
+):
+    """
+    Submit a request to register a new company/organization.
+    """
+    db_obj = OrganizationRequest(
+        company_name=request_in.company_name,
+        contact_person=request_in.contact_person,
+        business_email=request_in.business_email,
+        phone_number=request_in.phone_number,
+        industry=request_in.industry,
+        company_size=request_in.company_size,
+        notes=request_in.notes,
+        status="pending"
+    )
+    db.add(db_obj)
+    await db.commit()
+    await db.refresh(db_obj)
+    return db_obj
+
+@router.get("/organization-requests", response_model=List[OrganizationRequestResponse])
+async def list_organization_requests(
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSession = Depends(require_auth)
+):
+    """
+    List all organization requests (Platform Admin view).
+    """
+    stmt = select(OrganizationRequest).order_by(OrganizationRequest.created_at.desc())
+    res = await db.execute(stmt)
+    return res.scalars().all()
+
+@router.post("/organization-requests/{request_id}/approve", response_model=OrganizationRequestResponse)
+async def approve_organization_request(
+    request_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSession = Depends(require_auth)
+):
+    """
+    Approve organization request, provision Tenant/Organization, link user as Owner/Super Admin.
+    """
+    stmt = select(OrganizationRequest).where(OrganizationRequest.id == request_id)
+    res = await db.execute(stmt)
+    req_obj = res.scalars().first()
+    if not req_obj:
+        raise HTTPException(status_code=404, detail="Organization request not found")
+    if req_obj.status != "pending":
+        raise HTTPException(status_code=400, detail="Request is not pending")
+
+    # Generate unique slug
+    slug = await get_unique_slug(db, req_obj.company_name)
+
+    # Provision Clerk Organization if configured
+    clerk_org_id = None
+    if settings.CLERK_SECRET_KEY and not settings.CLERK_SECRET_KEY.startswith("mock") and settings.CLERK_SECRET_KEY != "":
+        headers = {
+            "Authorization": f"Bearer {settings.CLERK_SECRET_KEY}",
+            "Content-Type": "application/json"
+        }
+        try:
+            resp = requests.post(
+                "https://api.clerk.com/v1/organizations",
+                json={"name": req_obj.company_name},
+                headers=headers
+            )
+            if resp.status_code in [200, 201]:
+                clerk_org_id = resp.json().get("id")
+        except Exception:
+            pass
+
+    if not clerk_org_id:
+        clerk_org_id = f"org_mock_{uuid.uuid4().hex[:8]}"
+
+    # Save Organization
+    org = Organization(
+        name=req_obj.company_name,
+        slug=slug,
+        clerk_org_id=clerk_org_id,
+        status="active"
+    )
+    db.add(org)
+    await db.commit()
+    await db.refresh(org)
+
+    # Link/Create user as Super Admin
+    user_stmt = select(User).where(User.email == req_obj.business_email)
+    user_res = await db.execute(user_stmt)
+    db_user = user_res.scalars().first()
+
+    if db_user:
+        db_user.tenant_id = org.id
+        db_user.role = "Super Admin"
+    else:
+        db_user = User(
+            tenant_id=org.id,
+            clerk_user_id=f"user_mock_{uuid.uuid4().hex[:8]}",
+            email=req_obj.business_email,
+            first_name=req_obj.contact_person.split(" ")[0],
+            last_name=" ".join(req_obj.contact_person.split(" ")[1:]) if len(req_obj.contact_person.split(" ")) > 1 else "",
+            role="Super Admin"
+        )
+        db.add(db_user)
+
+    await db.commit()
+    await db.refresh(db_user)
+
+    # Associate Clerk user with organization if clerk keys are active
+    if settings.CLERK_SECRET_KEY and not settings.CLERK_SECRET_KEY.startswith("mock") and settings.CLERK_SECRET_KEY != "" and not db_user.clerk_user_id.startswith("user_mock_"):
+        headers = {
+            "Authorization": f"Bearer {settings.CLERK_SECRET_KEY}",
+            "Content-Type": "application/json"
+        }
+        try:
+            requests.post(
+                f"https://api.clerk.com/v1/organizations/{clerk_org_id}/memberships",
+                json={"user_id": db_user.clerk_user_id, "role": "org:admin"},
+                headers=headers
+            )
+        except Exception:
+            pass
+
+    # Save Audit Log
+    audit_log = AuditLog(
+        tenant_id=org.id,
+        user_id=db_user.id,
+        action="ORG_REQUEST_APPROVED",
+        target_table="organization_requests",
+        target_id=req_obj.id,
+        new_values={"company_name": req_obj.company_name, "organization_id": org.id}
+    )
+    db.add(audit_log)
+
+    # Update request
+    req_obj.status = "approved"
+    await db.commit()
+    await db.refresh(req_obj)
+
+    return req_obj
+
+@router.post("/organization-requests/{request_id}/reject", response_model=OrganizationRequestResponse)
+async def reject_organization_request(
+    request_id: str,
+    action_in: OrganizationRequestAction,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSession = Depends(require_auth)
+):
+    """
+    Reject organization request.
+    """
+    stmt = select(OrganizationRequest).where(OrganizationRequest.id == request_id)
+    res = await db.execute(stmt)
+    req_obj = res.scalars().first()
+    if not req_obj:
+        raise HTTPException(status_code=404, detail="Organization request not found")
+    if req_obj.status != "pending":
+        raise HTTPException(status_code=400, detail="Request is not pending")
+
+    req_obj.status = "rejected"
+    req_obj.rejection_notes = action_in.rejection_notes
+    await db.commit()
+    await db.refresh(req_obj)
+
+    audit_log = AuditLog(
+        tenant_id="system",
+        action="ORG_REQUEST_REJECTED",
+        target_table="organization_requests",
+        target_id=req_obj.id,
+        new_values={"company_name": req_obj.company_name, "rejection_notes": action_in.rejection_notes}
+    )
+    db.add(audit_log)
+    await db.commit()
+
+    return req_obj
+
+
+# --- DEPARTMENTS ---
+
+@router.post("/organizations/departments", response_model=DepartmentResponse, status_code=status.HTTP_201_CREATED)
+async def create_department(
+    dept_in: DepartmentCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSession = Depends(require_org)
+):
+    """
+    Create a new department in the active organization.
+    """
+    db_obj = OrganizationDepartment(
+        tenant_id=current_user.tenant_id,
+        name=dept_in.name,
+        description=dept_in.description
+    )
+    db.add(db_obj)
+    await db.commit()
+    await db.refresh(db_obj)
+    return db_obj
+
+@router.get("/organizations/departments", response_model=List[DepartmentResponse])
+async def list_departments(
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSession = Depends(require_org)
+):
+    """
+    List all departments in the active organization.
+    """
+    stmt = select(OrganizationDepartment).where(OrganizationDepartment.tenant_id == current_user.tenant_id)
+    res = await db.execute(stmt)
+    return res.scalars().all()
+
+@router.put("/organizations/departments/{dept_id}", response_model=DepartmentResponse)
+async def update_department(
+    dept_id: str,
+    dept_in: DepartmentCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSession = Depends(require_org)
+):
+    """
+    Update a department.
+    """
+    stmt = select(OrganizationDepartment).where(OrganizationDepartment.id == dept_id, OrganizationDepartment.tenant_id == current_user.tenant_id)
+    res = await db.execute(stmt)
+    db_obj = res.scalars().first()
+    if not db_obj:
+        raise HTTPException(status_code=404, detail="Department not found")
+
+    db_obj.name = dept_in.name
+    db_obj.description = dept_in.description
+    await db.commit()
+    await db.refresh(db_obj)
+    return db_obj
+
+@router.delete("/organizations/departments/{dept_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_department(
+    dept_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSession = Depends(require_org)
+):
+    """
+    Delete a department.
+    """
+    stmt = select(OrganizationDepartment).where(OrganizationDepartment.id == dept_id, OrganizationDepartment.tenant_id == current_user.tenant_id)
+    res = await db.execute(stmt)
+    db_obj = res.scalars().first()
+    if not db_obj:
+        raise HTTPException(status_code=404, detail="Department not found")
+
+    await db.delete(db_obj)
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --- INVITATIONS ---
+
+@router.post("/organizations/invitations", response_model=InvitationResponse, status_code=status.HTTP_201_CREATED)
+async def create_invitation(
+    invite_in: InvitationCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSession = Depends(require_org)
+):
+    """
+    Create a member invitation, sync with Clerk user lifecycle, and send email via Resend.
+    """
+    user_stmt = select(User).where(User.email == invite_in.email)
+    user_res = await db.execute(user_stmt)
+    if user_res.scalars().first():
+        raise HTTPException(status_code=400, detail="User with this email already exists")
+
+    org_stmt = select(Organization).where(Organization.clerk_org_id == current_user.tenant_id)
+    org_res = await db.execute(org_stmt)
+    org = org_res.scalars().first()
+    if not org:
+        org_stmt = select(Organization).where(Organization.id == current_user.tenant_id)
+        org_res = await db.execute(org_stmt)
+        org = org_res.scalars().first()
+        if not org:
+            raise HTTPException(status_code=404, detail="Organization not found")
+
+    temp_password = f"TempPass_{uuid.uuid4().hex[:8]}!"
+    token = uuid.uuid4().hex
+
+    clerk_user_id = None
+    if not settings.CLERK_SECRET_KEY or settings.CLERK_SECRET_KEY.startswith("mock") or settings.CLERK_SECRET_KEY == "":
+        clerk_user_id = f"user_mock_{uuid.uuid4().hex[:8]}"
+    else:
+        clerk_payload = {
+            "email_address": [invite_in.email],
+            "first_name": invite_in.first_name or "",
+            "last_name": invite_in.last_name or "",
+            "password": temp_password,
+            "skip_password_checks": True
+        }
+        headers = {
+            "Authorization": f"Bearer {settings.CLERK_SECRET_KEY}",
+            "Content-Type": "application/json"
+        }
+        try:
+            resp = requests.post("https://api.clerk.com/v1/users", json=clerk_payload, headers=headers)
+            if resp.status_code not in [200, 201]:
+                raise HTTPException(status_code=resp.status_code, detail=f"Clerk user creation failed: {resp.text}")
+            clerk_user_id = resp.json().get("id")
+        except Exception as e:
+            if isinstance(e, HTTPException):
+                raise e
+            raise HTTPException(status_code=500, detail=f"Network error calling Clerk API: {str(e)}")
+
+    clerk_role = "org:member"
+    if invite_in.role in ["Super Admin", "Organization Owner"]:
+        clerk_role = "org:admin"
+
+    if org.clerk_org_id and settings.CLERK_SECRET_KEY and not settings.CLERK_SECRET_KEY.startswith("mock") and settings.CLERK_SECRET_KEY != "":
+        headers = {
+            "Authorization": f"Bearer {settings.CLERK_SECRET_KEY}",
+            "Content-Type": "application/json"
+        }
+        try:
+            requests.post(
+                f"https://api.clerk.com/v1/organizations/{org.clerk_org_id}/memberships",
+                json={"user_id": clerk_user_id, "role": clerk_role},
+                headers=headers
+            )
+        except Exception:
+            pass
+
+    db_user = User(
+        tenant_id=org.id,
+        clerk_user_id=clerk_user_id,
+        email=invite_in.email,
+        first_name=invite_in.first_name,
+        last_name=invite_in.last_name,
+        role=invite_in.role,
+        department_id=invite_in.department_id
+    )
+    db.add(db_user)
+    await db.commit()
+    await db.refresh(db_user)
+
+    from datetime import timedelta
+    expires_at = datetime.utcnow() + timedelta(days=7)
+
+    invitation = OrganizationInvitation(
+        tenant_id=org.id,
+        email=invite_in.email,
+        first_name=invite_in.first_name,
+        last_name=invite_in.last_name,
+        role=invite_in.role,
+        department_id=invite_in.department_id,
+        status="pending",
+        token=token,
+        expires_at=expires_at
+    )
+    db.add(invitation)
+    await db.commit()
+    await db.refresh(invitation)
+
+    if settings.RESEND_API_KEY and not settings.RESEND_API_KEY.startswith("mock") and settings.RESEND_API_KEY != "":
+        import resend
+        try:
+            resend.api_key = settings.RESEND_API_KEY
+            email_params = {
+                "from": "SupplierERP Invites <onboarding@resend.dev>",
+                "to": invite_in.email,
+                "subject": "Invitation to join SupplierERP",
+                "html": f"""
+                <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
+                    <h2 style="color: #0f172a; margin-bottom: 16px;">Welcome to SupplierERP!</h2>
+                    <p style="color: #475569; line-height: 1.6;">You have been invited to join the organization <strong>{org.name}</strong> on SupplierERP.</p>
+                    <p style="color: #475569; line-height: 1.6;">Here are your temporary login credentials to sign in:</p>
+                    <div style="background-color: #f8fafc; padding: 16px; border-radius: 6px; margin: 20px 0;">
+                        <p style="margin: 0; color: #0f172a;"><strong>Email:</strong> {invite_in.email}</p>
+                        <p style="margin: 8px 0 0 0; color: #0f172a;"><strong>Temporary Password:</strong> <code style="background-color: #e2e8f0; padding: 2px 6px; border-radius: 4px;">{temp_password}</code></p>
+                    </div>
+                    <p style="color: #475569; line-height: 1.6;">Please log in using the button below and change your password immediately in your account settings:</p>
+                    <a href="https://erp-delta-hazel.vercel.app/sign-in" style="display: inline-block; background-color: #0f172a; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; margin-top: 10px;">Sign In Here</a>
+                </div>
+                """
+            }
+            resend.Emails.send(email_params)
+        except Exception:
+            pass
+
+    return invitation
+
+@router.get("/organizations/invitations", response_model=List[InvitationResponse])
+async def list_invitations(
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSession = Depends(require_org)
+):
+    """
+    List all invitations for the active organization.
+    """
+    stmt = select(OrganizationInvitation).where(OrganizationInvitation.tenant_id == current_user.tenant_id)
+    res = await db.execute(stmt)
+    return res.scalars().all()
+
+@router.delete("/organizations/invitations/{invitation_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_invitation(
+    invitation_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSession = Depends(require_org)
+):
+    """
+    Revoke a pending member invitation.
+    """
+    stmt = select(OrganizationInvitation).where(OrganizationInvitation.id == invitation_id, OrganizationInvitation.tenant_id == current_user.tenant_id)
+    res = await db.execute(stmt)
+    invitation = res.scalars().first()
+    if not invitation:
+        raise HTTPException(status_code=404, detail="Invitation not found")
+
+    invitation.status = "revoked"
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

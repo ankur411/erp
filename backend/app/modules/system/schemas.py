@@ -166,4 +166,75 @@ class AuditLogResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class OrganizationRequestCreate(BaseModel):
+    company_name: str = Field(..., min_length=1, max_length=255)
+    contact_person: str = Field(..., min_length=1, max_length=255)
+    business_email: str = Field(..., min_length=1, max_length=255)
+    phone_number: str = Field(..., min_length=1, max_length=50)
+    industry: str = Field(..., min_length=1, max_length=100)
+    company_size: str = Field(..., min_length=1, max_length=50)
+    notes: Optional[str] = Field(None, max_length=1024)
+
+
+class OrganizationRequestResponse(BaseModel):
+    id: str
+    company_name: str
+    contact_person: str
+    business_email: str
+    phone_number: str
+    industry: str
+    company_size: str
+    notes: Optional[str] = None
+    status: str
+    rejection_notes: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OrganizationRequestAction(BaseModel):
+    rejection_notes: Optional[str] = Field(None, max_length=1024)
+
+
+class DepartmentCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = Field(None, max_length=512)
+
+
+class DepartmentResponse(BaseModel):
+    id: str
+    tenant_id: str
+    name: str
+    description: Optional[str] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class InvitationCreate(BaseModel):
+    email: str = Field(..., min_length=1, max_length=255)
+    first_name: Optional[str] = Field(None, max_length=100)
+    last_name: Optional[str] = Field(None, max_length=100)
+    role: str = Field(..., min_length=1, max_length=50)
+    department_id: Optional[str] = Field(None, max_length=36)
+
+
+class InvitationResponse(BaseModel):
+    id: str
+    tenant_id: str
+    email: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    role: str
+    department_id: Optional[str] = None
+    status: str
+    token: str
+    expires_at: datetime
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+
 

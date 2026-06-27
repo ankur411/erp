@@ -15,7 +15,11 @@ import {
   Sliders,
   Play,
   RotateCcw,
-  Sparkles
+  Sparkles,
+  CheckCircle,
+  XCircle,
+  Clock,
+  AlertCircle
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useERPStore } from "@/lib/store";
@@ -36,11 +40,26 @@ interface Organization {
   };
 }
 
+interface OrganizationRequest {
+  id: string;
+  company_name: string;
+  contact_person: string;
+  business_email: string;
+  phone_number: string;
+  industry: string;
+  company_size: string;
+  notes?: string;
+  status: "pending" | "approved" | "rejected";
+  rejection_notes?: string;
+  created_at: string;
+}
+
 export default function OrganizationsView() {
   const queryClient = useQueryClient();
   const { registerTenant, updateTenantAccess } = useERPStore();
   const { authFetch } = useApi();
 
+  const [activeSubTab, setActiveSubTab] = useState<"tenants" | "requests">("tenants");
   const [searchQuery, setSearchQuery] = useState("");
   const [showProvisionModal, setShowProvisionModal] = useState(false);
   const [provisionName, setProvisionName] = useState("");
@@ -58,12 +77,27 @@ export default function OrganizationsView() {
 
   const [impersonatingOrg, setImpersonatingOrg] = useState<string | null>(null);
 
+  // Rejection Modal state
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectRequestId, setRejectRequestId] = useState<string | null>(null);
+  const [rejectionNotes, setRejectionNotes] = useState("");
+
   // Fetch live tenants
-  const { data: tenants = [], isLoading, error } = useQuery<Organization[]>({
+  const { data: tenants = [], isLoading: isLoadingTenants } = useQuery<Organization[]>({
     queryKey: ["admin-tenants"],
     queryFn: async () => {
       const res = await authFetch("/api/v1/system/tenants");
       if (!res.ok) throw new Error("Failed to fetch tenants");
+      return res.json();
+    },
+  });
+
+  // Fetch pending/all organization requests
+  const { data: requests = [], isLoading: isLoadingRequests } = useQuery<OrganizationRequest[]>({
+    queryKey: ["admin-org-requests"],
+    queryFn: async () => {
+      const res = await authFetch("/api/v1/system/organization-requests");
+      if (!res.ok) throw new Error("Failed to fetch organization requests");
       return res.json();
     },
   });
@@ -94,6 +128,54 @@ export default function OrganizationsView() {
     },
     onError: (err) => {
       alert("Error saving: " + err.message);
+    }
+  });
+
+  // Approve organization request mutation
+  const approveRequestMutation = useMutation({
+    mutationFn: async (requestId: string) => {
+      const res = await authFetch(`/api/v1/system/organization-requests/${requestId}/approve`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ detail: "Failed to approve request" }));
+        throw new Error(errData.detail || "Failed to approve request");
+      }
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["admin-tenants"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-org-requests"] });
+      alert(`Organization request approved. Workspace "${data.company_name}" has been successfully provisioned.`);
+    },
+    onError: (err: any) => {
+      alert("Error approving request: " + err.message);
+    }
+  });
+
+  // Reject organization request mutation
+  const rejectRequestMutation = useMutation({
+    mutationFn: async ({ requestId, notes }: { requestId: string; notes: string }) => {
+      const res = await authFetch(`/api/v1/system/organization-requests/${requestId}/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rejection_notes: notes }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ detail: "Failed to reject request" }));
+        throw new Error(errData.detail || "Failed to reject request");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-org-requests"] });
+      setShowRejectModal(false);
+      setRejectRequestId(null);
+      setRejectionNotes("");
+      alert("Organization request rejected successfully.");
+    },
+    onError: (err: any) => {
+      alert("Error rejecting request: " + err.message);
     }
   });
 
@@ -176,6 +258,26 @@ export default function OrganizationsView() {
     tenant.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  const filteredRequests = requests.filter((req) =>
+    req.company_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    req.contact_person.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const handleRejectClick = (reqId: string) => {
+    setRejectRequestId(reqId);
+    setRejectionNotes("");
+    setShowRejectModal(true);
+  };
+
+  const handleRejectSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!rejectRequestId) return;
+    rejectRequestMutation.mutate({
+      requestId: rejectRequestId,
+      notes: rejectionNotes,
+    });
+  };
+
   return (
     <div className="space-y-6">
       
@@ -205,7 +307,7 @@ export default function OrganizationsView() {
         <div>
           <h1 className="text-xl font-bold tracking-tight">Organization Administration</h1>
           <p className="text-xs text-slate-500 dark:text-slate-450">
-            Manage multi-tenant workspaces, edit system module permissions, and audit billing states.
+            Manage multi-tenant workspaces, edit system module permissions, and audit pending sign-ups.
           </p>
         </div>
         <button
@@ -217,13 +319,48 @@ export default function OrganizationsView() {
         </button>
       </div>
 
+      {/* Sub Tabs */}
+      <div className="flex border-b border-slate-200 dark:border-slate-800 gap-4">
+        <button
+          onClick={() => {
+            setActiveSubTab("tenants");
+            setSearchQuery("");
+          }}
+          className={`pb-2.5 text-xs font-bold border-b-2 transition-all ${
+            activeSubTab === "tenants"
+              ? "border-blue-600 text-blue-600 dark:text-blue-500"
+              : "border-transparent text-slate-450 dark:text-slate-500 hover:text-slate-800 dark:hover:text-slate-350"
+          }`}
+        >
+          Active Organizations ({tenants.length})
+        </button>
+        <button
+          onClick={() => {
+            setActiveSubTab("requests");
+            setSearchQuery("");
+          }}
+          className={`pb-2.5 text-xs font-bold border-b-2 transition-all flex items-center gap-1.5 ${
+            activeSubTab === "requests"
+              ? "border-blue-600 text-blue-600 dark:text-blue-500"
+              : "border-transparent text-slate-450 dark:text-slate-500 hover:text-slate-800 dark:hover:text-slate-350"
+          }`}
+        >
+          <span>Pending Registrations</span>
+          {requests.filter(r => r.status === "pending").length > 0 && (
+            <span className="px-1.5 py-0.5 rounded-full bg-amber-500 text-white text-[9px] font-extrabold animate-pulse">
+              {requests.filter(r => r.status === "pending").length}
+            </span>
+          )}
+        </button>
+      </div>
+
       {/* Control panel & search */}
       <div className="flex items-center gap-4 bg-white dark:bg-slate-900/60 backdrop-blur-sm border border-slate-200 dark:border-slate-850 p-4 rounded-2xl shadow-sm">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
           <input
             type="text"
-            placeholder="Search tenant name or Clerk ID..."
+            placeholder={activeSubTab === "tenants" ? "Search tenant name or Clerk ID..." : "Search company name or contact..."}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full text-xs border border-slate-200 dark:border-slate-800 rounded-lg pl-9 pr-4 py-2 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-1 focus:ring-blue-600 transition-all placeholder-slate-400 dark:placeholder-slate-500"
@@ -231,111 +368,220 @@ export default function OrganizationsView() {
         </div>
       </div>
 
-      {/* Organization Table */}
-      <div className="bg-white dark:bg-slate-900/60 backdrop-blur-sm border border-slate-200 dark:border-slate-850 rounded-2xl overflow-hidden shadow-sm">
-        {isLoading ? (
-          <div className="p-12 text-center text-xs text-slate-450 animate-pulse">Loading organizations database...</div>
-        ) : filteredTenants.length === 0 ? (
-          <div className="p-12 text-center text-xs text-slate-450">No organizations found.</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="border-b border-slate-250 dark:border-slate-850 bg-slate-50/50 dark:bg-slate-900/50 text-[10px] font-bold uppercase tracking-wider text-slate-450 dark:text-slate-500">
-                  <th className="px-6 py-4">Workspace / Organization</th>
-                  <th className="px-6 py-4">Clerk Reference</th>
-                  <th className="px-6 py-4">Enabled Modules</th>
-                  <th className="px-6 py-4">Status</th>
-                  <th className="px-6 py-4">Created Date</th>
-                  <th className="px-6 py-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-850">
-                {filteredTenants.map((tenant) => {
-                  const isActive = tenant.status === "active";
-                  return (
-                    <tr key={tenant.id} className="hover:bg-slate-50/40 dark:hover:bg-slate-850/20 transition-all duration-200">
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-3">
-                          <div className="h-8 w-8 rounded-xl bg-blue-500/10 dark:bg-blue-500/5 flex items-center justify-center shrink-0 border border-blue-500/20">
-                            <Building2 className="h-4.5 w-4.5 text-blue-600 dark:text-blue-400" />
+      {activeSubTab === "tenants" ? (
+        /* Organization Table */
+        <div className="bg-white dark:bg-slate-900/60 backdrop-blur-sm border border-slate-200 dark:border-slate-850 rounded-2xl overflow-hidden shadow-sm">
+          {isLoadingTenants ? (
+            <div className="p-12 text-center text-xs text-slate-450 animate-pulse">Loading organizations database...</div>
+          ) : filteredTenants.length === 0 ? (
+            <div className="p-12 text-center text-xs text-slate-450">No organizations found.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="border-b border-slate-250 dark:border-slate-850 bg-slate-50/50 dark:bg-slate-900/50 text-[10px] font-bold uppercase tracking-wider text-slate-450 dark:text-slate-500">
+                    <th className="px-6 py-4">Workspace / Organization</th>
+                    <th className="px-6 py-4">Clerk Reference</th>
+                    <th className="px-6 py-4">Enabled Modules</th>
+                    <th className="px-6 py-4">Status</th>
+                    <th className="px-6 py-4">Created Date</th>
+                    <th className="px-6 py-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-850">
+                  {filteredTenants.map((tenant) => {
+                    const isActive = tenant.status === "active";
+                    return (
+                      <tr key={tenant.id} className="hover:bg-slate-50/40 dark:hover:bg-slate-850/20 transition-all duration-200">
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="h-8 w-8 rounded-xl bg-blue-500/10 dark:bg-blue-500/5 flex items-center justify-center shrink-0 border border-blue-500/20">
+                              <Building2 className="h-4.5 w-4.5 text-blue-600 dark:text-blue-400" />
+                            </div>
+                            <div>
+                              <span className="font-bold block">{tenant.name}</span>
+                              <span className="text-[10px] text-slate-400">ID: {tenant.id}</span>
+                            </div>
                           </div>
-                          <div>
-                            <span className="font-bold block">{tenant.name}</span>
-                            <span className="text-[10px] text-slate-400">ID: {tenant.id}</span>
+                        </td>
+                        <td className="px-6 py-4 font-mono text-[10px] text-slate-400 select-all">
+                          {tenant.clerk_org_id}
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex flex-wrap gap-1">
+                            {Object.entries(tenant.access_config || {}).map(([mod, val]) => (
+                              <span
+                                key={mod}
+                                className={`px-1.5 py-0.5 rounded-md text-[9px] font-bold capitalize ${
+                                  val
+                                    ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-450"
+                                    : "bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500"
+                                }`}
+                              >
+                                {mod.replace("_", " ")}
+                              </span>
+                            ))}
                           </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 font-mono text-[10px] text-slate-400 select-all">
-                        {tenant.clerk_org_id}
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex flex-wrap gap-1">
-                          {Object.entries(tenant.access_config || {}).map(([mod, val]) => (
-                            <span
-                              key={mod}
-                              className={`px-1.5 py-0.5 rounded-md text-[9px] font-bold capitalize ${
-                                val
-                                  ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-450"
-                                  : "bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500"
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            isActive
+                              ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-450"
+                              : "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-405"
+                          }`}>
+                            {tenant.status.toUpperCase()}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-slate-400">
+                          {new Date(tenant.created_at).toLocaleDateString("en-IN", {
+                            year: "numeric",
+                            month: "short",
+                            day: "numeric",
+                          })}
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              onClick={() => handleOpenAccessModal(tenant)}
+                              title="Edit Permissions"
+                              className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-850 rounded-lg text-slate-400 hover:text-blue-600 transition-colors"
+                            >
+                              <Sliders className="h-4 w-4" />
+                            </button>
+                            <button
+                              onClick={() => handleImpersonate(tenant.name)}
+                              title="Impersonate"
+                              className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-850 rounded-lg text-slate-400 hover:text-emerald-600 transition-colors"
+                            >
+                              <UserCog className="h-4 w-4" />
+                            </button>
+                            <button
+                              onClick={() => handleToggleSuspend(tenant.id, tenant.status)}
+                              title={isActive ? "Suspend organization" : "Re-activate organization"}
+                              className={`p-1.5 hover:bg-slate-100 dark:hover:bg-slate-850 rounded-lg text-slate-400 transition-colors ${
+                                isActive ? "hover:text-amber-500" : "hover:text-emerald-500"
                               }`}
                             >
-                              {mod.replace("_", " ")}
+                              {isActive ? <Ban className="h-4 w-4" /> : <RotateCcw className="h-4 w-4" />}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      ) : (
+        /* Pending Registration Requests Table */
+        <div className="bg-white dark:bg-slate-900/60 backdrop-blur-sm border border-slate-200 dark:border-slate-850 rounded-2xl overflow-hidden shadow-sm">
+          {isLoadingRequests ? (
+            <div className="p-12 text-center text-xs text-slate-450 animate-pulse">Loading registration requests...</div>
+          ) : filteredRequests.length === 0 ? (
+            <div className="p-12 text-center text-xs text-slate-450">No registration requests found.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="border-b border-slate-250 dark:border-slate-850 bg-slate-50/50 dark:bg-slate-900/50 text-[10px] font-bold uppercase tracking-wider text-slate-450 dark:text-slate-500">
+                    <th className="px-6 py-4">Company Name</th>
+                    <th className="px-6 py-4">Contact Details</th>
+                    <th className="px-6 py-4">Industry / Size</th>
+                    <th className="px-6 py-4">Status</th>
+                    <th className="px-6 py-4">Requested At</th>
+                    <th className="px-6 py-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-850">
+                  {filteredRequests.map((req) => {
+                    const isPending = req.status === "pending";
+                    return (
+                      <tr key={req.id} className="hover:bg-slate-50/40 dark:hover:bg-slate-850/20 transition-all duration-200">
+                        <td className="px-6 py-4">
+                          <div>
+                            <span className="font-bold block text-slate-800 dark:text-slate-200">{req.company_name}</span>
+                            {req.notes && (
+                              <span className="text-[10px] text-slate-400 block max-w-xs truncate" title={req.notes}>
+                                Note: "{req.notes}"
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 space-y-0.5">
+                          <span className="font-semibold block">{req.contact_person}</span>
+                          <span className="text-[10px] text-slate-400 block">{req.business_email}</span>
+                          <span className="text-[10px] text-slate-400 block">{req.phone_number}</span>
+                        </td>
+                        <td className="px-6 py-4 space-y-0.5 text-slate-600 dark:text-slate-350">
+                          <span className="block capitalize font-semibold">{req.industry}</span>
+                          <span className="text-[10px] text-slate-400 block">{req.company_size} employees</span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            req.status === "approved"
+                              ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-450"
+                              : req.status === "rejected"
+                              ? "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-405"
+                              : "bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-455"
+                          }`}>
+                            {req.status === "approved" && <CheckCircle className="h-3 w-3" />}
+                            {req.status === "rejected" && <XCircle className="h-3 w-3" />}
+                            {req.status === "pending" && <Clock className="h-3 w-3 animate-spin" />}
+                            {req.status.toUpperCase()}
+                          </span>
+                          {req.rejection_notes && (
+                            <span className="block text-[9px] text-red-500 dark:text-red-400 italic max-w-xs truncate">
+                              "{req.rejection_notes}"
                             </span>
-                          ))}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                          isActive
-                            ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-450"
-                            : "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-405"
-                        }`}>
-                          {tenant.status.toUpperCase()}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-slate-400">
-                        {new Date(tenant.created_at).toLocaleDateString("en-IN", {
-                          year: "numeric",
-                          month: "short",
-                          day: "numeric",
-                        })}
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            onClick={() => handleOpenAccessModal(tenant)}
-                            title="Edit Permissions"
-                            className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-850 rounded-lg text-slate-400 hover:text-blue-600 transition-colors"
-                          >
-                            <Sliders className="h-4 w-4" />
-                          </button>
-                          <button
-                            onClick={() => handleImpersonate(tenant.name)}
-                            title="Impersonate"
-                            className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-850 rounded-lg text-slate-400 hover:text-emerald-600 transition-colors"
-                          >
-                            <UserCog className="h-4 w-4" />
-                          </button>
-                          <button
-                            onClick={() => handleToggleSuspend(tenant.id, tenant.status)}
-                            title={isActive ? "Suspend organization" : "Re-activate organization"}
-                            className={`p-1.5 hover:bg-slate-100 dark:hover:bg-slate-850 rounded-lg text-slate-400 transition-colors ${
-                              isActive ? "hover:text-amber-500" : "hover:text-emerald-500"
-                            }`}
-                          >
-                            {isActive ? <Ban className="h-4 w-4" /> : <RotateCcw className="h-4 w-4" />}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 text-slate-400">
+                          {new Date(req.created_at).toLocaleString("en-IN", {
+                            year: "numeric",
+                            month: "short",
+                            day: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          {isPending ? (
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                onClick={() => {
+                                  if (confirm(`Approve registration request for "${req.company_name}"?`)) {
+                                    approveRequestMutation.mutate(req.id);
+                                  }
+                                }}
+                                disabled={approveRequestMutation.isPending}
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold transition-all disabled:opacity-50"
+                              >
+                                <Check className="h-3 w-3" />
+                                Approve
+                              </button>
+                              <button
+                                onClick={() => handleRejectClick(req.id)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-[10px] font-bold transition-all"
+                              >
+                                <X className="h-3 w-3" />
+                                Reject
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-slate-400 font-semibold italic">Processed</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Provision Organization Modal */}
       <AnimatePresence>
@@ -395,6 +641,68 @@ export default function OrganizationsView() {
                     className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold transition-all shadow-md shadow-blue-500/10"
                   >
                     {provisioning ? "Provisioning..." : "Activate Tenant"}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Reject Request Modal */}
+      <AnimatePresence>
+        {showRejectModal && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.5 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowRejectModal(false)}
+              className="fixed inset-0 z-40 bg-black"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-xl z-50 space-y-4"
+            >
+              <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-850 pb-3">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="h-5 w-5 text-red-650" />
+                  <span className="font-bold text-sm">Reject Registration Request</span>
+                </div>
+                <button onClick={() => setShowRejectModal(false)} className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded">
+                  <X className="h-4.5 w-4.5" />
+                </button>
+              </div>
+
+              <form onSubmit={handleRejectSubmit} className="space-y-4 text-xs">
+                <div className="space-y-1.5">
+                  <label className="font-semibold text-slate-650 dark:text-slate-400">Rejection Reason / Notes</label>
+                  <textarea
+                    required
+                    rows={4}
+                    value={rejectionNotes}
+                    onChange={(e) => setRejectionNotes(e.target.value)}
+                    placeholder="Enter reason for rejecting this company request. These notes will be recorded and logged."
+                    className="w-full border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-1 focus:ring-red-600 font-semibold resize-none"
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowRejectModal(false)}
+                    className="px-4 py-2 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 rounded-xl font-bold"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={rejectRequestMutation.isPending}
+                    className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold transition-all shadow-md shadow-red-500/10"
+                  >
+                    {rejectRequestMutation.isPending ? "Rejecting..." : "Confirm Reject"}
                   </button>
                 </div>
               </form>

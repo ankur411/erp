@@ -1,6 +1,9 @@
 import pytest
 from sqlalchemy import select
-from app.models.system import Organization, User, Document, Plan
+from app.models.system import (
+    Organization, User, Document, Plan, ApiKey,
+    OrganizationRequest, OrganizationDepartment, OrganizationInvitation
+)
 from app.models.supplier import Supplier
 from app.models.purchase import PurchaseOrder
 from app.models.finance import Payment
@@ -321,6 +324,206 @@ async def test_platform_analytics_history_and_audit_logs(client, db_session):
         assert response_logs.status_code == 200
         logs = response_logs.json()
         assert isinstance(logs, list)
+
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_organization_requests_flow(client, db_session):
+    """
+    Test organization request creation, listing, approval, and rejection.
+    """
+    app.dependency_overrides[require_auth] = mock_require_auth
+
+    try:
+        # 1. Create a request
+        payload = {
+            "company_name": "Acme Test Inc",
+            "contact_person": "John Doe",
+            "business_email": "john.doe@acmetest.com",
+            "phone_number": "+1234567890",
+            "industry": "Manufacturing",
+            "company_size": "50-100",
+            "notes": "Testing organization request onboarding."
+        }
+        response = await client.post("/api/v1/system/organization-requests", json=payload)
+        assert response.status_code == 201
+        data = response.json()
+        assert data["company_name"] == "Acme Test Inc"
+        assert data["status"] == "pending"
+        request_id = data["id"]
+
+        # 2. List requests
+        list_resp = await client.get("/api/v1/system/organization-requests")
+        assert list_resp.status_code == 200
+        list_data = list_resp.json()
+        assert len(list_data) >= 1
+        assert any(r["id"] == request_id for r in list_data)
+
+        # 3. Approve request
+        approve_resp = await client.post(f"/api/v1/system/organization-requests/{request_id}/approve")
+        assert approve_resp.status_code == 200
+        approve_data = approve_resp.json()
+        assert approve_data["status"] == "approved"
+
+        # Verify Organization was created
+        org_stmt = select(Organization).where(Organization.name == "Acme Test Inc")
+        org_res = await db_session.execute(org_stmt)
+        org = org_res.scalars().first()
+        assert org is not None
+        assert org.status == "active"
+
+        # Verify User was linked/created as Super Admin
+        user_stmt = select(User).where(User.email == "john.doe@acmetest.com")
+        user_res = await db_session.execute(user_stmt)
+        user = user_res.scalars().first()
+        assert user is not None
+        assert user.tenant_id == org.id
+        assert user.role == "Super Admin"
+
+        # 4. Test rejection flow (create another request and reject it)
+        payload2 = {
+            "company_name": "Reject Corp",
+            "contact_person": "Bad Actor",
+            "business_email": "bad@reject.com",
+            "phone_number": "0000000000",
+            "industry": "Other",
+            "company_size": "1-10",
+            "notes": "Please reject me."
+        }
+        resp2 = await client.post("/api/v1/system/organization-requests", json=payload2)
+        assert resp2.status_code == 201
+        req2_id = resp2.json()["id"]
+
+        reject_payload = {"rejection_notes": "Not a valid business."}
+        reject_resp = await client.post(f"/api/v1/system/organization-requests/{req2_id}/reject", json=reject_payload)
+        assert reject_resp.status_code == 200
+        reject_data = reject_resp.json()
+        assert reject_data["status"] == "rejected"
+        assert reject_data["rejection_notes"] == "Not a valid business."
+
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_departments_crud_flow(client, db_session):
+    """
+    Test department CRUD endpoints.
+    """
+    # 1. Create a dummy organization
+    org = Organization(name="Dept Org", slug="dept-org", clerk_org_id="org_dept_123", status="active")
+    db_session.add(org)
+    await db_session.commit()
+    await db_session.refresh(org)
+
+    async def mock_require_org_dept():
+        return UserSession(
+            user_id="usr_admin",
+            email="admin@dept.com",
+            tenant_id=org.id,
+            role="org:admin"
+        )
+
+    app.dependency_overrides[require_org] = mock_require_org_dept
+
+    try:
+        # Create department
+        payload = {
+            "name": "Engineering",
+            "description": "Tech and product team"
+        }
+        resp = await client.post("/api/v1/system/organizations/departments", json=payload)
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["name"] == "Engineering"
+        dept_id = data["id"]
+
+        # List departments
+        list_resp = await client.get("/api/v1/system/organizations/departments")
+        assert list_resp.status_code == 200
+        list_data = list_resp.json()
+        assert len(list_data) == 1
+        assert list_data[0]["id"] == dept_id
+
+        # Update department
+        update_payload = {
+            "name": "R&D Team",
+            "description": "Research and development"
+        }
+        up_resp = await client.put(f"/api/v1/system/organizations/departments/{dept_id}", json=update_payload)
+        assert up_resp.status_code == 200
+        assert up_resp.json()["name"] == "R&D Team"
+
+        # Delete department
+        del_resp = await client.delete(f"/api/v1/system/organizations/departments/{dept_id}")
+        assert del_resp.status_code == 204
+
+        # Verify deletion
+        list_resp2 = await client.get("/api/v1/system/organizations/departments")
+        assert len(list_resp2.json()) == 0
+
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_invitations_lifecycle_flow(client, db_session):
+    """
+    Test creation, listing, and revoking of organization invitations.
+    """
+    org = Organization(name="Invite Flow Org", slug="invite-flow-org", clerk_org_id="org_invite_flow_123", status="active")
+    db_session.add(org)
+    await db_session.commit()
+    await db_session.refresh(org)
+
+    async def mock_require_org_invite():
+        return UserSession(
+            user_id="usr_admin",
+            email="admin@inviteflow.com",
+            tenant_id=org.id,
+            role="org:admin"
+        )
+
+    app.dependency_overrides[require_org] = mock_require_org_invite
+
+    try:
+        # Create invitation
+        payload = {
+            "email": "invitee@test.com",
+            "first_name": "Alice",
+            "last_name": "Smith",
+            "role": "Employee",
+            "department_id": None
+        }
+        resp = await client.post("/api/v1/system/organizations/invitations", json=payload)
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["email"] == "invitee@test.com"
+        assert data["status"] == "pending"
+        inv_id = data["id"]
+
+        # Verify User was pre-created in local DB
+        user_stmt = select(User).where(User.email == "invitee@test.com")
+        user_res = await db_session.execute(user_stmt)
+        assert user_res.scalars().first() is not None
+
+        # List invitations
+        list_resp = await client.get("/api/v1/system/organizations/invitations")
+        assert list_resp.status_code == 200
+        list_data = list_resp.json()
+        assert len(list_data) == 1
+        assert list_data[0]["id"] == inv_id
+
+        # Revoke invitation
+        revoke_resp = await client.delete(f"/api/v1/system/organizations/invitations/{inv_id}")
+        assert revoke_resp.status_code == 204
+
+        # Verify revoked status in DB
+        inv_stmt = select(OrganizationInvitation).where(OrganizationInvitation.id == inv_id)
+        inv_res = await db_session.execute(inv_stmt)
+        assert inv_res.scalars().first().status == "revoked"
 
     finally:
         app.dependency_overrides.clear()

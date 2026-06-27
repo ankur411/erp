@@ -33,9 +33,11 @@ class User(Base):
     first_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     last_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     role: Mapped[str] = mapped_column(String(50), nullable=False) # Role in system
+    department_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("organization_departments.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     organization: Mapped[Organization] = relationship("Organization", back_populates="users")
+    department: Mapped[Optional["OrganizationDepartment"]] = relationship("OrganizationDepartment")
 
 class AuditLog(Base, HasTenant):
     __tablename__ = "audit_logs"
@@ -86,4 +88,44 @@ class ApiKey(Base, HasTenant):
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+
+
+class OrganizationRequest(Base):
+    __tablename__ = "organization_requests"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    company_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    contact_person: Mapped[str] = mapped_column(String(255), nullable=False)
+    business_email: Mapped[str] = mapped_column(String(255), nullable=False)
+    phone_number: Mapped[str] = mapped_column(String(50), nullable=False)
+    industry: Mapped[str] = mapped_column(String(100), nullable=False)
+    company_size: Mapped[str] = mapped_column(String(50), nullable=False)
+    notes: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    status: Mapped[str] = mapped_column(String(50), default="pending", nullable=False) # pending, approved, rejected
+    rejection_notes: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class OrganizationDepartment(Base, HasTenant):
+    __tablename__ = "organization_departments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+
+
+class OrganizationInvitation(Base, HasTenant):
+    __tablename__ = "organization_invitations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    first_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    last_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    role: Mapped[str] = mapped_column(String(50), nullable=False)
+    department_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("organization_departments.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String(50), default="pending", nullable=False) # pending, accepted, expired, revoked
+    token: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
 
