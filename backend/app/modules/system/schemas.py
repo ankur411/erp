@@ -158,6 +158,8 @@ class AuthMeResponse(BaseModel):
     user_id: str           # TiDB internal UUID
     clerk_user_id: Optional[str] = None
     email: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     role: str              # platform_admin | org:admin | org:member | etc.
     org_id: Optional[str] = None    # TiDB Organization.id (not Clerk org ID)
     org_name: Optional[str] = None
@@ -165,6 +167,8 @@ class AuthMeResponse(BaseModel):
     clerk_org_id: Optional[str] = None
     status: str = "active"
     is_platform_admin: bool = False
+    page_permissions: Optional[dict] = None
+
 
 
 class ClerkSyncResult(BaseModel):

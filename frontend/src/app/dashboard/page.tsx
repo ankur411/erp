@@ -185,6 +185,11 @@ export default function DashboardPage() {
   const [orgInvitations, setOrgInvitations] = useState<any[]>([]);
   const [loadingOrgUsers, setLoadingOrgUsers] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [userProfile, setUserProfile] = useState<{
+     first_name?: string;
+     last_name?: string;
+     email?: string;
+  } | null>(null);
 
   const loadOrgUsersAndInvitations = async () => {
     setLoadingOrgUsers(true);
@@ -208,9 +213,14 @@ export default function DashboardPage() {
     const initData = async () => {
       try {
         // 1. Fetch user/org details from /system/auth/me
-        const authRes = await authFetch("/api/v1/system/auth/me");
+        const authRes = await authFetch("/api/v1/system/auth/me", { method: "POST" });
         if (authRes.ok) {
           const authData = await authRes.json();
+          setUserProfile({
+            first_name: authData.first_name,
+            last_name: authData.last_name,
+            email: authData.email
+          });
           useERPStore.setState({
             currentOrg: authData.org_name || "No Organization",
             userRole: authData.role,
@@ -535,24 +545,6 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Platform Admin Portal Access */}
-          {adminPortalUrl && userRole === "platform_admin" && (
-            <div className="p-3 mx-3 mt-3 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/40 rounded-xl">
-              <a 
-                href={adminPortalUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center justify-between text-xs font-bold text-emerald-800 dark:text-emerald-450 hover:opacity-90 transition-opacity"
-              >
-                <div className="flex items-center gap-2">
-                  <Shield className="h-4 w-4 text-emerald-600 dark:text-emerald-500" />
-                  <span>Platform Admin Portal</span>
-                </div>
-                <ChevronRight className="h-3 w-3" />
-              </a>
-            </div>
-          )}
-
           {/* Navigation Links */}
           <nav className="p-3 space-y-1">
             {[
@@ -595,10 +587,16 @@ export default function DashboardPage() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <div className="h-7 w-7 rounded-full bg-zinc-300 dark:bg-zinc-700 flex items-center justify-center font-bold text-xs">
-                AG
+                {userProfile?.first_name || userProfile?.last_name
+                  ? `${userProfile.first_name?.[0] || ""}${userProfile.last_name?.[0] || ""}`.toUpperCase()
+                  : "U"}
               </div>
               <div>
-                <div className="text-xs font-semibold leading-none">Aarush Gupta</div>
+                <div className="text-xs font-semibold leading-none">
+                  {userProfile?.first_name || userProfile?.last_name
+                    ? `${userProfile.first_name || ""} ${userProfile.last_name || ""}`.trim()
+                    : userProfile?.email || "User"}
+                </div>
                 <span className="text-[10px] text-zinc-400 uppercase tracking-wide font-medium">Local Auth Session</span>
               </div>
             </div>

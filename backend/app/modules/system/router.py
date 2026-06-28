@@ -163,13 +163,16 @@ async def auth_me(
             user_id=user.id,
             clerk_user_id=user.clerk_user_id,
             email=user.email,
+            first_name=user.first_name,
+            last_name=user.last_name,
             role=user.role,
             org_id=org.id if org else None,
             org_name=org.name if org else None,
             org_slug=org.slug if org else None,
             clerk_org_id=org.clerk_org_id if org else None,
             status=user.status,
-            is_platform_admin=(user.role == "platform_admin")
+            is_platform_admin=(user.role == "platform_admin"),
+            page_permissions=user.page_permissions
         )
     
     raise HTTPException(
