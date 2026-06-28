@@ -37,6 +37,7 @@ class User(Base):
     status: Mapped[str] = mapped_column(String(50), default="active", nullable=False) # active | inactive
     department_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("organization_departments.id"), nullable=True)
     last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    page_permissions: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     organization: Mapped[Organization] = relationship("Organization", back_populates="users")
@@ -129,6 +130,7 @@ class OrganizationInvitation(Base, HasTenant):
     department_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("organization_departments.id"), nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="pending", nullable=False) # pending, accepted, expired, revoked
     token: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    page_permissions: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 

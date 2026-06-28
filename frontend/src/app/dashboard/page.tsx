@@ -56,7 +56,7 @@ import {
 import { useERPStore, Supplier, Product, PurchaseOrder, Invoice, Payment } from "@/lib/store";
 import { useRouter } from "next/navigation";
 
-type TabType = "dashboard" | "suppliers" | "products" | "inventory" | "purchase" | "finance" | "tenant_control" | "integrations";
+type TabType = "dashboard" | "suppliers" | "products" | "inventory" | "purchase" | "finance" | "tenant_control" | "integrations" | "org_admin";
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -79,8 +79,7 @@ export default function DashboardPage() {
     tenantAccess,
     currentOrg,
     userRole,
-    setOrg,
-    setRole,
+    pagePermissions,
     addSupplier,
     addProduct,
     adjustStock,
@@ -88,8 +87,7 @@ export default function DashboardPage() {
     updatePOStatus,
     receivePO,
     createInvoice,
-    recordPayment,
-    updateTenantAccess
+    recordPayment
   } = useERPStore();
 
   // Integrations state
@@ -160,9 +158,128 @@ export default function DashboardPage() {
     }
   };
 
+  // Org Admin local states
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [selectedUserForEdit, setSelectedUserForEdit] = useState<any | null>(null);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteFirstName, setInviteFirstName] = useState("");
+  const [inviteLastName, setInviteLastName] = useState("");
+  const [inviteRole, setInviteRole] = useState("org:member");
+  const [invitePermissions, setInvitePermissions] = useState<Record<string, boolean>>({
+    suppliers: true,
+    products: true,
+    inventory: true,
+    purchase: true,
+    finance: true
+  });
+  const [editRole, setEditRole] = useState("org:member");
+  const [editPermissions, setEditPermissions] = useState<Record<string, boolean>>({
+    suppliers: true,
+    products: true,
+    inventory: true,
+    purchase: true,
+    finance: true
+  });
+  const [orgUsers, setOrgUsers] = useState<any[]>([]);
+  const [orgInvitations, setOrgInvitations] = useState<any[]>([]);
+  const [loadingOrgUsers, setLoadingOrgUsers] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  const loadOrgUsersAndInvitations = async () => {
+    setLoadingOrgUsers(true);
+    try {
+      const uRes = await authFetch("/api/v1/system/organizations/users");
+      if (uRes.ok) {
+        setOrgUsers(await uRes.json());
+      }
+      const iRes = await authFetch("/api/v1/system/organizations/invitations");
+      if (iRes.ok) {
+        setOrgInvitations(await iRes.json());
+      }
+    } catch (err) {
+      console.error("Failed to load organization members", err);
+    } finally {
+      setLoadingOrgUsers(false);
+    }
+  };
+
+  React.useEffect(() => {
+    const initData = async () => {
+      try {
+        // 1. Fetch user/org details from /system/auth/me
+        const authRes = await authFetch("/api/v1/system/auth/me");
+        if (authRes.ok) {
+          const authData = await authRes.json();
+          useERPStore.setState({
+            currentOrg: authData.org_name || "No Organization",
+            userRole: authData.role,
+            pagePermissions: authData.page_permissions || {}
+          });
+        }
+        
+        // 2. Fetch suppliers
+        const supRes = await authFetch("/api/v1/suppliers/");
+        if (supRes.ok) {
+          const supData = await supRes.json();
+          useERPStore.setState({ suppliers: supData.items || [] });
+        }
+        
+        // 3. Fetch products
+        const prodRes = await authFetch("/api/v1/products");
+        if (prodRes.ok) {
+          const prodData = await prodRes.json();
+          useERPStore.setState({ products: prodData || [] });
+        }
+
+        // 4. Fetch categories
+        const catRes = await authFetch("/api/v1/categories");
+        if (catRes.ok) {
+          const catData = await catRes.json();
+          useERPStore.setState({ categories: catData || [] });
+        }
+
+        // 5. Fetch warehouses
+        const whRes = await authFetch("/api/v1/warehouses");
+        if (whRes.ok) {
+          const whData = await whRes.json();
+          useERPStore.setState({ warehouses: whData || [] });
+        }
+
+        // 6. Fetch inventory
+        const invRes = await authFetch("/api/v1/inventory");
+        if (invRes.ok) {
+          const invData = await invRes.json();
+          useERPStore.setState({ inventory: invData || [] });
+        }
+
+        // 7. Fetch purchase orders
+        const poRes = await authFetch("/api/v1/purchase-orders/");
+        if (poRes.ok) {
+          const poData = await poRes.json();
+          useERPStore.setState({ purchaseOrders: poData || [] });
+        }
+
+        // 8. Fetch invoices
+        const invListRes = await authFetch("/api/v1/finance/invoices");
+        if (invListRes.ok) {
+          const invListData = await invListRes.json();
+          useERPStore.setState({ invoices: invListData || [] });
+        }
+      } catch (err) {
+        console.error("Error loading initial data", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    initData();
+  }, []);
+
   React.useEffect(() => {
     if (activeTab === "integrations") {
       loadIntegrations();
+    } else if (activeTab === "org_admin") {
+      loadOrgUsersAndInvitations();
     }
   }, [activeTab]);
 
@@ -355,16 +472,10 @@ export default function DashboardPage() {
   };
 
   const isModuleEnabled = (tabId: string) => {
-    if (userRole === "platform_admin") return true;
-    const access = tenantAccess[currentOrg];
-    if (!access) return true;
-    
-    if (tabId === "suppliers") return access.suppliers;
-    if (tabId === "products") return access.products;
-    if (tabId === "inventory") return access.inventory;
-    if (tabId === "purchase") return access.purchaseOrders;
-    if (tabId === "finance") return access.finance;
-    return true;
+    if (userRole === "org:admin" || userRole === "platform_admin") return true;
+    if (tabId === "dashboard") return true;
+    if (tabId === "org_admin" || tabId === "integrations") return false;
+    return !!pagePermissions?.[tabId];
   };
 
   // Export Suppliers to Mock CSV
@@ -410,7 +521,7 @@ export default function DashboardPage() {
       {/* SIDEBAR */}
       <aside className="w-full md:w-64 border-b md:border-b-0 md:border-r border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex flex-col justify-between">
         <div>
-          {/* Brand Logo & Org Swticher */}
+          {/* Brand Logo & Org Display */}
           <div className="p-4 border-b border-zinc-200 dark:border-zinc-800 flex items-center gap-3">
             <div className="h-8 w-8 rounded-lg bg-zinc-900 dark:bg-white flex items-center justify-center text-white dark:text-black font-extrabold text-sm tracking-wider">
               SE
@@ -418,22 +529,14 @@ export default function DashboardPage() {
             <div>
               <div className="text-xs font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">Organization</div>
               <div className="flex items-center gap-1.5 text-sm font-semibold text-zinc-900 dark:text-zinc-50 leading-none mt-1">
-                <Building className="h-3.5 w-3.5" />
-                <select 
-                  className="bg-transparent font-medium focus:outline-none cursor-pointer text-xs" 
-                  value={currentOrg}
-                  onChange={(e) => setOrg(e.target.value)}
-                >
-                  <option value="Acme Manufacturing Inc.">Acme Mfg Inc.</option>
-                  <option value="Nexus Logistics Ltd.">Nexus Logistics</option>
-                  <option value="Apex Distributors">Apex Distrib.</option>
-                </select>
+                <Building className="h-3.5 w-3.5 text-zinc-400" />
+                <span className="text-xs font-semibold">{currentOrg || "Loading..."}</span>
               </div>
             </div>
           </div>
 
           {/* Platform Admin Portal Access */}
-          {adminPortalUrl && (
+          {adminPortalUrl && userRole === "platform_admin" && (
             <div className="p-3 mx-3 mt-3 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/40 rounded-xl">
               <a 
                 href={adminPortalUrl}
@@ -450,22 +553,6 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* Quick Role Toggle (For Demoing RBAC Security Gateways) */}
-          <div className="px-4 py-3 bg-zinc-50 dark:bg-zinc-900/50 border-b border-zinc-200 dark:border-zinc-800">
-             <div className="flex items-center justify-between text-xs text-zinc-400">
-                <span className="flex items-center gap-1"><Shield className="h-3 w-3 text-emerald-500" /> Active Role</span>
-             </div>
-             <select
-               className="mt-1.5 w-full text-xs bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-2 py-1 focus:outline-none"
-               value={userRole}
-               onChange={(e) => setRole(e.target.value as any)}
-             >
-                {Object.entries(roleNames).map(([key, name]) => (
-                   <option key={key} value={key}>{name}</option>
-                ))}
-             </select>
-          </div>
-
           {/* Navigation Links */}
           <nav className="p-3 space-y-1">
             {[
@@ -475,7 +562,10 @@ export default function DashboardPage() {
               { id: "inventory", label: "Inventory & Stock", icon: WarehouseIcon },
               { id: "purchase", label: "Purchase Orders", icon: FileText },
               { id: "finance", label: "Finance & Invoices", icon: CreditCard },
-              { id: "integrations", label: "n8n Integrations", icon: Link2 }
+              { id: "integrations", label: "n8n Integrations", icon: Link2 },
+              ...(userRole === "org:admin" || userRole === "platform_admin"
+                ? [{ id: "org_admin", label: "Org Admin", icon: Building }]
+                : [])
             ].filter(item => isModuleEnabled(item.id)).map((item) => {
               const Icon = item.icon;
               const isActive = activeTab === item.id;
@@ -1140,55 +1230,209 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* TAB 7: TENANT ACCESS CONTROL */}
-          {activeTab === "tenant_control" && (
+          {/* TAB 7: ORG ADMIN */}
+          {activeTab === "org_admin" && (
             <div className="space-y-6">
                <div className="flex justify-between items-center">
                   <div>
-                     <h2 className="text-xl font-bold tracking-tight">Platform Tenant Administration</h2>
-                     <p className="text-xs text-zinc-500 mt-1">Granular controls to manage module access per tenant. Simulates backend tenant policy enforcement.</p>
+                     <h2 className="text-xl font-bold tracking-tight">Organization Administration</h2>
+                     <p className="text-xs text-zinc-500 mt-1">Control organizational access, invite members, and configure page permissions.</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setInviteEmail("");
+                      setInviteFirstName("");
+                      setInviteLastName("");
+                      setInviteRole("org:member");
+                      setInvitePermissions({
+                        suppliers: true,
+                        products: true,
+                        inventory: true,
+                        purchase: true,
+                        finance: true
+                      });
+                      setShowInviteModal(true);
+                    }}
+                    className="flex items-center gap-1 bg-zinc-900 text-white dark:bg-white dark:text-black px-3 py-1.5 rounded-lg text-xs font-semibold"
+                  >
+                     <Plus className="h-3.5 w-3.5" /> Invite Member
+                  </button>
+               </div>
+
+               {/* Members Table */}
+               <div className="space-y-4">
+                  <h3 className="text-sm font-semibold">Active Members</h3>
+                  <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl overflow-hidden">
+                     <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs border-collapse">
+                           <thead>
+                              <tr className="border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-850/50 text-zinc-400 font-semibold uppercase">
+                                 <th className="p-3">User Name / Email</th>
+                                 <th className="p-3">Role</th>
+                                 <th className="p-3">Page Permissions</th>
+                                 <th className="p-3 text-right">Actions</th>
+                              </tr>
+                           </thead>
+                           <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                              {loadingOrgUsers ? (
+                                 <tr>
+                                    <td colSpan={4} className="p-4 text-center text-zinc-400">Loading members...</td>
+                                 </tr>
+                              ) : orgUsers.length === 0 ? (
+                                 <tr>
+                                    <td colSpan={4} className="p-4 text-center text-zinc-400">No active members found.</td>
+                                 </tr>
+                              ) : orgUsers.map((user) => (
+                                 <tr key={user.id} className="hover:bg-zinc-50/50 dark:hover:bg-zinc-900/50">
+                                    <td className="p-3">
+                                       <div className="font-semibold">{user.first_name || user.last_name ? `${user.first_name || ""} ${user.last_name || ""}`.trim() : "Unnamed User"}</div>
+                                       <div className="text-[10px] text-zinc-400">{user.email}</div>
+                                    </td>
+                                    <td className="p-3">
+                                       <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                          user.role === "org:admin"
+                                             ? "bg-purple-100 text-purple-800 dark:bg-purple-950/30 dark:text-purple-400"
+                                             : "bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300"
+                                       }`}>
+                                          {roleNames[user.role] || user.role}
+                                       </span>
+                                    </td>
+                                    <td className="p-3">
+                                       <div className="flex flex-wrap gap-1">
+                                          {Object.entries((user.page_permissions || {}) as Record<string, boolean>).map(([page, allowed]) => (
+                                             allowed && (
+                                                <span key={page} className="px-1.5 py-0.5 bg-zinc-100 dark:bg-zinc-800 rounded text-[9px] capitalize text-zinc-650 dark:text-zinc-355 font-medium">
+                                                   {page === "purchase" ? "purchase orders" : page}
+                                                </span>
+                                             )
+                                          ))}
+                                       </div>
+                                    </td>
+                                    <td className="p-3 text-right">
+                                       <div className="flex justify-end gap-2">
+                                          <button
+                                            onClick={() => {
+                                              setSelectedUserForEdit(user);
+                                              setEditRole(user.role);
+                                              setEditPermissions({
+                                                suppliers: user.page_permissions?.suppliers ?? false,
+                                                products: user.page_permissions?.products ?? false,
+                                                inventory: user.page_permissions?.inventory ?? false,
+                                                purchase: user.page_permissions?.purchase ?? false,
+                                                finance: user.page_permissions?.finance ?? false
+                                              });
+                                              setShowEditModal(true);
+                                            }}
+                                            className="px-2 py-1 border border-zinc-200 dark:border-zinc-800 rounded text-[10px] hover:bg-zinc-50 dark:hover:bg-zinc-850"
+                                          >
+                                             Edit
+                                          </button>
+                                          <button
+                                            onClick={async () => {
+                                              if (confirm(`Are you sure you want to revoke access for ${user.email}?`)) {
+                                                try {
+                                                  const res = await authFetch(`/api/v1/system/organizations/users/${user.id}`, {
+                                                    method: "DELETE"
+                                                  });
+                                                  if (res.ok) {
+                                                    alert("User access revoked.");
+                                                    loadOrgUsersAndInvitations();
+                                                  } else {
+                                                    const err = await res.json();
+                                                    alert(`Failed to revoke access: ${err.detail || "Unknown error"}`);
+                                                  }
+                                                } catch (e) {
+                                                  alert("An error occurred while revoking access.");
+                                                }
+                                              }
+                                            }}
+                                            className="px-2 py-1 bg-red-50 text-red-650 dark:bg-red-950/20 dark:text-red-400 border border-red-100 dark:border-red-900/40 rounded text-[10px] hover:opacity-90"
+                                          >
+                                             Revoke
+                                          </button>
+                                       </div>
+                                    </td>
+                                 </tr>
+                              ))}
+                           </tbody>
+                        </table>
+                     </div>
                   </div>
                </div>
 
-               <div className="grid grid-cols-1 gap-6">
-                  {Object.keys(tenantAccess).map((company) => (
-                     <div key={company} className="p-6 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl space-y-4">
-                        <div className="flex justify-between items-center border-b border-zinc-200 dark:border-zinc-800 pb-3">
-                           <div>
-                              <div className="text-sm font-bold">{company}</div>
-                              <div className="text-[10px] text-zinc-400 mt-0.5">ID: {company.toLowerCase().replace(/[^a-z0-9]/g, "-")}</div>
-                           </div>
-                           <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-400">Active Tenant</span>
-                        </div>
-
-                        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                           {(["suppliers", "products", "inventory", "purchaseOrders", "finance"] as const).map((module) => {
-                              const isEnabled = tenantAccess[company][module];
-                              return (
-                                 <button
-                                    key={module}
-                                    onClick={() => updateTenantAccess(company, module, !isEnabled)}
-                                    className={`p-3 rounded-lg border text-left flex flex-col justify-between transition-all duration-200 ${
-                                       isEnabled
-                                          ? "bg-zinc-900 text-white border-zinc-900 dark:bg-zinc-100 dark:text-black dark:border-zinc-100"
-                                          : "bg-zinc-50 border-zinc-200 text-zinc-500 hover:bg-zinc-100 dark:bg-zinc-800/40 dark:border-zinc-800 dark:text-zinc-400"
-                                    }`}
-                                 >
-                                    <div className="text-[10px] uppercase font-bold tracking-wider opacity-85">
-                                       {module === "purchaseOrders" ? "Purchase Orders" : module}
-                                    </div>
-                                    <div className="mt-3 flex items-center justify-between w-full">
-                                       <span className="text-xs font-semibold">
-                                          {isEnabled ? "Enabled" : "Disabled"}
+               {/* Pending Invitations Table */}
+               <div className="space-y-4">
+                  <h3 className="text-sm font-semibold">Pending Invitations</h3>
+                  <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl overflow-hidden">
+                     <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs border-collapse">
+                           <thead>
+                              <tr className="border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-850/50 text-zinc-400 font-semibold uppercase">
+                                 <th className="p-3">Email Address</th>
+                                 <th className="p-3">Invited Role</th>
+                                 <th className="p-3">Page Permissions</th>
+                                 <th className="p-3 text-right">Actions</th>
+                              </tr>
+                           </thead>
+                           <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                              {loadingOrgUsers ? (
+                                 <tr>
+                                    <td colSpan={4} className="p-4 text-center text-zinc-400">Loading invitations...</td>
+                                 </tr>
+                              ) : orgInvitations.length === 0 ? (
+                                 <tr>
+                                    <td colSpan={4} className="p-4 text-center text-zinc-400 font-medium">No pending invitations.</td>
+                                 </tr>
+                              ) : orgInvitations.map((invite) => (
+                                 <tr key={invite.id} className="hover:bg-zinc-50/50 dark:hover:bg-zinc-900/50">
+                                    <td className="p-3 font-medium">{invite.email}</td>
+                                    <td className="p-3">
+                                       <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300">
+                                          {roleNames[invite.role] || invite.role}
                                        </span>
-                                       <span className={`h-2.5 w-2.5 rounded-full ${isEnabled ? "bg-emerald-400" : "bg-zinc-400"}`}></span>
-                                    </div>
-                                 </button>
-                              );
-                           })}
-                        </div>
+                                    </td>
+                                    <td className="p-3">
+                                       <div className="flex flex-wrap gap-1">
+                                          {Object.entries((invite.page_permissions || {}) as Record<string, boolean>).map(([page, allowed]) => (
+                                             allowed && (
+                                                <span key={page} className="px-1.5 py-0.5 bg-zinc-100 dark:bg-zinc-800 rounded text-[9px] capitalize text-zinc-650 dark:text-zinc-355 font-medium">
+                                                   {page === "purchase" ? "purchase orders" : page}
+                                                </span>
+                                             )
+                                          ))}
+                                       </div>
+                                    </td>
+                                    <td className="p-3 text-right">
+                                       <button
+                                         onClick={async () => {
+                                           if (confirm(`Are you sure you want to revoke this invitation for ${invite.email}?`)) {
+                                             try {
+                                               const res = await authFetch(`/api/v1/system/organizations/invitations/${invite.id}`, {
+                                                 method: "DELETE"
+                                               });
+                                               if (res.ok) {
+                                                 alert("Invitation revoked successfully.");
+                                                 loadOrgUsersAndInvitations();
+                                               } else {
+                                                 const err = await res.json();
+                                                 alert(`Failed to revoke invitation: ${err.detail || "Unknown error"}`);
+                                               }
+                                             } catch (e) {
+                                               alert("An error occurred while revoking invitation.");
+                                             }
+                                           }
+                                         }}
+                                         className="px-2 py-1 bg-red-50 text-red-650 dark:bg-red-950/20 dark:text-red-400 border border-red-100 dark:border-red-900/40 rounded text-[10px] hover:opacity-90"
+                                       >
+                                          Cancel Invite
+                                       </button>
+                                    </td>
+                                 </tr>
+                              ))}
+                           </tbody>
+                        </table>
                      </div>
-                  ))}
+                  </div>
                </div>
             </div>
           )}
@@ -1869,6 +2113,175 @@ export default function DashboardPage() {
                 className="w-full py-2.5 bg-zinc-900 text-white dark:bg-white dark:text-black font-semibold rounded-lg text-xs"
               >
                  Post Payment Ledger
+              </button>
+           </div>
+        </div>
+      )}
+
+      {/* 6. Invite Member Modal */}
+      {showInviteModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+           <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl w-full max-w-md p-6 space-y-4">
+              <div className="flex justify-between items-center">
+                 <h3 className="text-sm font-bold">Invite New Organization Member</h3>
+                 <button onClick={() => setShowInviteModal(false)} className="text-zinc-400 hover:text-zinc-600">✕</button>
+              </div>
+              <div className="space-y-3">
+                 <div className="grid grid-cols-2 gap-3">
+                    <div>
+                       <label className="text-[10px] font-bold text-zinc-400 block mb-1">First Name</label>
+                       <input type="text" className="w-full text-xs border rounded p-2 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700" value={inviteFirstName} onChange={(e) => setInviteFirstName(e.target.value)} />
+                    </div>
+                    <div>
+                       <label className="text-[10px] font-bold text-zinc-400 block mb-1">Last Name</label>
+                       <input type="text" className="w-full text-xs border rounded p-2 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700" value={inviteLastName} onChange={(e) => setInviteLastName(e.target.value)} />
+                    </div>
+                 </div>
+                 <div>
+                    <label className="text-[10px] font-bold text-zinc-400 block mb-1">Email Address</label>
+                    <input type="email" placeholder="member@company.com" className="w-full text-xs border rounded p-2 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} />
+                 </div>
+                 <div>
+                    <label className="text-[10px] font-bold text-zinc-400 block mb-1">Organization Role</label>
+                    <select className="w-full text-xs border rounded p-2 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700" value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}>
+                       <option value="org:member">Standard Member</option>
+                       <option value="org:procurement_manager">Procurement Manager</option>
+                       <option value="org:warehouse_manager">Warehouse Manager</option>
+                       <option value="org:accountant">Accountant</option>
+                       <option value="org:hr_manager">HR Manager</option>
+                       <option value="org:admin">Organization Admin</option>
+                    </select>
+                 </div>
+                 
+                 {inviteRole !== "org:admin" && (
+                    <div>
+                       <label className="text-[10px] font-bold text-zinc-400 block mb-2">Module Access Permissions</label>
+                       <div className="grid grid-cols-2 gap-2">
+                          {(["suppliers", "products", "inventory", "purchase", "finance"] as const).map((page) => (
+                             <label key={page} className="flex items-center gap-2 text-xs cursor-pointer p-2 border rounded hover:bg-zinc-50 dark:hover:bg-zinc-800 dark:border-zinc-700">
+                                <input
+                                   type="checkbox"
+                                   checked={invitePermissions[page]}
+                                   onChange={(e) => setInvitePermissions({
+                                      ...invitePermissions,
+                                      [page]: e.target.checked
+                                   })}
+                                />
+                                <span className="capitalize">{page === "purchase" ? "purchase orders" : page}</span>
+                             </label>
+                          ))}
+                       </div>
+                    </div>
+                 )}
+              </div>
+              <button
+                onClick={async () => {
+                   if (!inviteEmail) {
+                      alert("Please specify a recipient email address.");
+                      return;
+                   }
+                   try {
+                      const res = await authFetch("/api/v1/system/organizations/invitations", {
+                         method: "POST",
+                         body: JSON.stringify({
+                            email: inviteEmail,
+                            role: inviteRole,
+                            first_name: inviteFirstName,
+                            last_name: inviteLastName,
+                            page_permissions: inviteRole === "org:admin" ? null : invitePermissions
+                         })
+                      });
+                      if (res.ok) {
+                         alert("Invitation dispatched to member.");
+                         setShowInviteModal(false);
+                         loadOrgUsersAndInvitations();
+                      } else {
+                         const err = await res.json();
+                         alert(`Failed to send invitation: ${err.detail || "Unknown error"}`);
+                      }
+                   } catch (e) {
+                      alert("An error occurred while creating the invitation.");
+                   }
+                }}
+                className="w-full py-2.5 bg-zinc-900 text-white dark:bg-white dark:text-black font-semibold rounded-lg text-xs"
+              >
+                 Dispatch Invite
+              </button>
+           </div>
+        </div>
+      )}
+
+      {/* 7. Edit Member Permissions Modal */}
+      {showEditModal && selectedUserForEdit && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+           <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl w-full max-w-md p-6 space-y-4">
+              <div className="flex justify-between items-center">
+                 <h3 className="text-sm font-bold">Modify Member Access</h3>
+                 <button onClick={() => setShowEditModal(false)} className="text-zinc-400 hover:text-zinc-600">✕</button>
+              </div>
+              <div className="space-y-3">
+                 <div>
+                    <label className="text-[10px] font-bold text-zinc-400 block mb-1">User Email</label>
+                    <input type="text" className="w-full text-xs border rounded p-2 bg-zinc-50 dark:bg-zinc-800 dark:border-zinc-700 text-zinc-500 cursor-not-allowed" value={selectedUserForEdit.email} disabled />
+                 </div>
+                 <div>
+                    <label className="text-[10px] font-bold text-zinc-400 block mb-1">Organization Role</label>
+                    <select className="w-full text-xs border rounded p-2 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700" value={editRole} onChange={(e) => setEditRole(e.target.value)}>
+                       <option value="org:member">Standard Member</option>
+                       <option value="org:procurement_manager">Procurement Manager</option>
+                       <option value="org:warehouse_manager">Warehouse Manager</option>
+                       <option value="org:accountant">Accountant</option>
+                       <option value="org:hr_manager">HR Manager</option>
+                       <option value="org:admin">Organization Admin</option>
+                    </select>
+                 </div>
+                 
+                 {editRole !== "org:admin" && (
+                    <div>
+                       <label className="text-[10px] font-bold text-zinc-400 block mb-2">Module Access Permissions</label>
+                       <div className="grid grid-cols-2 gap-2">
+                          {(["suppliers", "products", "inventory", "purchase", "finance"] as const).map((page) => (
+                             <label key={page} className="flex items-center gap-2 text-xs cursor-pointer p-2 border rounded hover:bg-zinc-50 dark:hover:bg-zinc-800 dark:border-zinc-700">
+                                <input
+                                   type="checkbox"
+                                   checked={editPermissions[page]}
+                                   onChange={(e) => setEditPermissions({
+                                      ...editPermissions,
+                                      [page]: e.target.checked
+                                   })}
+                                />
+                                <span className="capitalize">{page === "purchase" ? "purchase orders" : page}</span>
+                             </label>
+                          ))}
+                       </div>
+                    </div>
+                 )}
+              </div>
+              <button
+                onClick={async () => {
+                   try {
+                      const res = await authFetch(`/api/v1/system/organizations/users/${selectedUserForEdit.id}`, {
+                         method: "PUT",
+                         body: JSON.stringify({
+                            role: editRole,
+                            page_permissions: editRole === "org:admin" ? null : editPermissions
+                         })
+                      });
+                      if (res.ok) {
+                         alert("User access permissions updated.");
+                         setShowEditModal(false);
+                         loadOrgUsersAndInvitations();
+                      } else {
+                         const err = await res.json();
+                         alert(`Failed to update user: ${err.detail || "Unknown error"}`);
+                      }
+                   } catch (e) {
+                      alert("An error occurred while updating the member access.");
+                   }
+                }}
+                className="w-full py-2.5 bg-zinc-900 text-white dark:bg-white dark:text-black font-semibold rounded-lg text-xs"
+              >
+                 Save Permissions
               </button>
            </div>
         </div>

@@ -118,7 +118,10 @@ class UserResponse(BaseModel):
     role: str
     status: str = "active"
     last_login_at: Optional[datetime] = None
+    page_permissions: Optional[dict] = None
     created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
 
 class UserAssignOrgRequest(BaseModel):
     tenant_id: Optional[str] = None
@@ -131,6 +134,10 @@ class UserUpdateRequest(BaseModel):
     role: Optional[str] = None
     status: Optional[str] = None
     password: Optional[str] = None
+
+class UserOrgUpdateRequest(BaseModel):
+    role: Optional[str] = None
+    page_permissions: Optional[dict] = None
 
 # --- AUTH / REDIRECT SCHEMAS ---
 
@@ -153,6 +160,7 @@ class AuthMeResponse(BaseModel):
     email: str
     role: str              # platform_admin | org:admin | org:member | etc.
     org_id: Optional[str] = None    # TiDB Organization.id (not Clerk org ID)
+    org_name: Optional[str] = None
     org_slug: Optional[str] = None
     clerk_org_id: Optional[str] = None
     status: str = "active"
@@ -274,6 +282,7 @@ class InvitationCreate(BaseModel):
     last_name: Optional[str] = Field(None, max_length=100)
     role: str = Field(..., min_length=1, max_length=50)
     department_id: Optional[str] = Field(None, max_length=36)
+    page_permissions: Optional[dict] = None
 
 
 class InvitationResponse(BaseModel):
@@ -287,6 +296,7 @@ class InvitationResponse(BaseModel):
     status: str
     token: str
     expires_at: datetime
+    page_permissions: Optional[dict] = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

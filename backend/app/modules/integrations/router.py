@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 
 from app.database import get_db, SessionLocal, tenant_context, user_context
-from app.core.auth import require_org, UserSession
+from app.core.auth import require_org, UserSession, RequireRole
 from app.models.integration import Integration, IntegrationSyncHistory
 from app.modules.integrations import schemas, services
 from app.modules.integrations.framework.registry import ConnectorRegistry
@@ -18,7 +18,7 @@ router = APIRouter(prefix="/integrations", tags=["Integrations"])
 @router.post("/test-connection", response_model=schemas.TestConnectionResponse)
 async def test_connection(
     req: schemas.TestConnectionRequest,
-    current_user: UserSession = Depends(require_org)
+    current_user: UserSession = Depends(RequireRole(["Super Admin", "Organization Owner"]))
 ):
     connector = ConnectorRegistry.get(req.type)
     if not connector:
@@ -35,7 +35,7 @@ async def test_connection(
 async def connect_integration(
     req: schemas.IntegrationConnectRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: UserSession = Depends(require_org)
+    current_user: UserSession = Depends(RequireRole(["Super Admin", "Organization Owner"]))
 ):
     connector = ConnectorRegistry.get(req.type)
     if not connector:
@@ -101,7 +101,7 @@ async def connect_integration(
 @router.get("", response_model=List[schemas.IntegrationResponse])
 async def list_integrations(
     db: AsyncSession = Depends(get_db),
-    current_user: UserSession = Depends(require_org)
+    current_user: UserSession = Depends(RequireRole(["Super Admin", "Organization Owner"]))
 ):
     t_token = tenant_context.set(current_user.tenant_id)
     try:
@@ -116,7 +116,7 @@ async def list_integrations(
 async def disconnect_integration(
     id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: UserSession = Depends(require_org)
+    current_user: UserSession = Depends(RequireRole(["Super Admin", "Organization Owner"]))
 ):
     t_token = tenant_context.set(current_user.tenant_id)
     try:
@@ -140,7 +140,7 @@ async def disconnect_integration(
 async def fetch_workflows(
     id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: UserSession = Depends(require_org)
+    current_user: UserSession = Depends(RequireRole(["Super Admin", "Organization Owner"]))
 ):
     t_token = tenant_context.set(current_user.tenant_id)
     try:
@@ -171,7 +171,7 @@ async def trigger_manual_import(
     req: schemas.ManualImportRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    current_user: UserSession = Depends(require_org)
+    current_user: UserSession = Depends(RequireRole(["Super Admin", "Organization Owner"]))
 ):
     t_token = tenant_context.set(current_user.tenant_id)
     try:
@@ -217,7 +217,7 @@ async def trigger_manual_import(
 async def get_sync_history(
     id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: UserSession = Depends(require_org)
+    current_user: UserSession = Depends(RequireRole(["Super Admin", "Organization Owner"]))
 ):
     t_token = tenant_context.set(current_user.tenant_id)
     try:
@@ -235,7 +235,7 @@ async def get_sync_history(
 async def rollback_sync_run(
     sync_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: UserSession = Depends(require_org)
+    current_user: UserSession = Depends(RequireRole(["Super Admin", "Organization Owner"]))
 ):
     t_token = tenant_context.set(current_user.tenant_id)
     try:

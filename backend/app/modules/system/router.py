@@ -23,7 +23,7 @@ from app.config import settings
 from app.core.storage import generate_presigned_upload_url, generate_presigned_download_url
 from app.modules.system.schemas import (
     DocumentCreate, PresignedUploadRequest, PresignedUploadResponse, DocumentResponse,
-    OrganizationCreate, OrganizationAccessUpdate, OrganizationResponse, PlatformAnalyticsResponse, PlanCreate, PlanUpdate, PlanResponse, UserInviteRequest, UserResponse, UserAssignOrgRequest, UserUpdateRequest,
+    OrganizationCreate, OrganizationAccessUpdate, OrganizationResponse, PlatformAnalyticsResponse, PlanCreate, PlanUpdate, PlanResponse, UserInviteRequest, UserResponse, UserAssignOrgRequest, UserUpdateRequest, UserOrgUpdateRequest,
     PlatformHistoryResponse, PlatformHistoryDataPoint, AuditLogResponse,
     OrganizationRequestCreate, OrganizationRequestResponse, OrganizationRequestAction,
     DepartmentCreate, DepartmentResponse, InvitationCreate, InvitationResponse,
@@ -165,6 +165,7 @@ async def auth_me(
             email=user.email,
             role=user.role,
             org_id=org.id if org else None,
+            org_name=org.name if org else None,
             org_slug=org.slug if org else None,
             clerk_org_id=org.clerk_org_id if org else None,
             status=user.status,
@@ -1219,7 +1220,7 @@ from app.modules.system.schemas import ApiKeyCreate, ApiKeyResponse, ApiKeyCreat
 @router.get("/api-keys", response_model=list[ApiKeyResponse])
 async def list_api_keys(
     db: AsyncSession = Depends(get_db),
-    current_user: UserSession = Depends(require_org)
+    current_user: UserSession = Depends(RequireRole(["Super Admin", "Organization Owner"]))
 ):
     """
     List all active API keys for the current organization.
@@ -1232,7 +1233,7 @@ async def list_api_keys(
 async def create_api_key(
     key_in: ApiKeyCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: UserSession = Depends(require_org)
+    current_user: UserSession = Depends(RequireRole(["Super Admin", "Organization Owner"]))
 ):
     """
     Generate a new API key for the current organization.
@@ -1278,7 +1279,7 @@ async def create_api_key(
 async def revoke_api_key(
     key_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: UserSession = Depends(require_org)
+    current_user: UserSession = Depends(RequireRole(["Super Admin", "Organization Owner"]))
 ):
     """
     Revoke/delete an API key for the current organization.
@@ -1550,6 +1551,100 @@ async def delete_department(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+# --- ORGANIZATION USERS MANAGEMENT ---
+
+@router.get("/organizations/users", response_model=List[UserResponse])
+async def list_organization_users(
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSession = Depends(require_org)
+):
+    """
+    List all users in the active organization.
+    """
+    stmt = select(User).where(User.tenant_id == current_user.tenant_id).execution_options(skip_tenant_filter=True)
+    res = await db.execute(stmt)
+    return res.scalars().all()
+
+
+@router.put("/organizations/users/{user_id}", response_model=UserResponse)
+async def update_organization_user(
+    user_id: str,
+    user_update: UserOrgUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSession = Depends(require_org)
+):
+    """
+    Update a user's role and/or page permissions in the active organization.
+    Only accessible by org:admin role.
+    """
+    current_user_db_stmt = select(User).where(
+        (User.id == current_user.user_id) | (User.clerk_user_id == current_user.user_id)
+    ).execution_options(skip_tenant_filter=True)
+    current_user_db_res = await db.execute(current_user_db_stmt)
+    current_user_db = current_user_db_res.scalars().first()
+    if not current_user_db or current_user_db.role != "org:admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only Organization Admins can modify member roles and permissions."
+        )
+
+    stmt = select(User).where(
+        User.id == user_id, 
+        User.tenant_id == current_user.tenant_id
+    ).execution_options(skip_tenant_filter=True)
+    res = await db.execute(stmt)
+    db_user = res.scalars().first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found in this organization")
+
+    if user_update.role is not None:
+        db_user.role = user_update.role
+    if user_update.page_permissions is not None:
+        db_user.page_permissions = user_update.page_permissions
+
+    await db.commit()
+    await db.refresh(db_user)
+    return db_user
+
+
+@router.delete("/organizations/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_organization_user(
+    user_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSession = Depends(require_org)
+):
+    """
+    Remove/delete a user from the active organization.
+    Only accessible by org:admin role.
+    """
+    current_user_db_stmt = select(User).where(
+        (User.id == current_user.user_id) | (User.clerk_user_id == current_user.user_id)
+    ).execution_options(skip_tenant_filter=True)
+    current_user_db_res = await db.execute(current_user_db_stmt)
+    current_user_db = current_user_db_res.scalars().first()
+    if not current_user_db or current_user_db.role != "org:admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only Organization Admins can remove organization members."
+        )
+
+    if user_id == current_user_db.id or user_id == current_user_db.clerk_user_id:
+        raise HTTPException(status_code=400, detail="You cannot remove yourself from the organization")
+
+    stmt = select(User).where(
+        User.id == user_id, 
+        User.tenant_id == current_user.tenant_id
+    ).execution_options(skip_tenant_filter=True)
+    res = await db.execute(stmt)
+    db_user = res.scalars().first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found in this organization")
+
+    await db.delete(db_user)
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 # --- INVITATIONS ---
 
 @router.post("/organizations/invitations", response_model=InvitationResponse, status_code=status.HTTP_201_CREATED)
@@ -1630,6 +1725,7 @@ async def create_invitation(
         last_name=invite_in.last_name,
         role=invite_in.role,
         department_id=invite_in.department_id,
+        page_permissions=invite_in.page_permissions,
         password_hash=hash_password(temp_password)
     )
     db.add(db_user)
@@ -1648,6 +1744,7 @@ async def create_invitation(
         department_id=invite_in.department_id,
         status="pending",
         token=token,
+        page_permissions=invite_in.page_permissions,
         expires_at=expires_at
     )
     db.add(invitation)
