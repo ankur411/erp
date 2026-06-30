@@ -15,6 +15,7 @@ import SystemHealthView from "./components/views/SystemHealthView";
 import AuditLogsView from "./components/views/AuditLogsView";
 import FeatureFlagsView from "./components/views/FeatureFlagsView";
 import SettingsView from "./components/views/SettingsView";
+import SupportTicketsView from "./components/views/SupportTicketsView";
 
 // Lucide icon placeholders
 import { HelpCircle, Sparkles, Server, HardDrive, Shield, AlertTriangle } from "lucide-react";
@@ -72,6 +73,8 @@ function AdminPortalPageContent() {
         return <FeatureFlagsView />;
       case "settings":
         return <SettingsView />;
+      case "support":
+        return <SupportTicketsView />;
 
       // Fallbacks for less common management views in next sprint
       case "analytics":

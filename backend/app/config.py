@@ -30,11 +30,12 @@ class Settings(BaseSettings):
     # Resend Email
     RESEND_API_KEY: str = ""
     
-    # Cloudflare R2 Storage (S3 compatible)
+    # Cloudflare R2 / Supabase Storage (S3 compatible)
     R2_ACCOUNT_ID: str = ""
     R2_ACCESS_KEY_ID: str = ""
     R2_SECRET_ACCESS_KEY: str = ""
     R2_BUCKET_NAME: str = "supplier-erp-documents"
+    STORAGE_ENDPOINT_URL: Optional[str] = None
     
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"

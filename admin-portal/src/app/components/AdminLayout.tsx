@@ -62,14 +62,12 @@ const SIDEBAR_ITEMS: SidebarItem[] = [
   // Management
   { id: "pricing", label: "Pricing Plans", icon: Tag, category: "Management" },
   { id: "flags", label: "Feature Flags", icon: ToggleRight, category: "Management", badge: "Beta" },
-  { id: "storage", label: "Storage R2", icon: HardDrive, category: "Management" },
   { id: "integrations", label: "Integrations", icon: Plug, category: "Management" },
-  { id: "support", label: "Support Tickets", icon: LifeBuoy, category: "Management", badge: "3" },
+  { id: "support", label: "Support Tickets", icon: LifeBuoy, category: "Management" },
 
   // Security & System
   { id: "health", label: "System Health", icon: Cpu, category: "Security & System" },
   { id: "audit", label: "Audit Logs", icon: ScrollText, category: "Security & System" },
-  { id: "api-keys", label: "API Keys", icon: Key, category: "Security & System" },
   { id: "security", label: "Security", icon: Shield, category: "Security & System" },
   { id: "backups", label: "Backups", icon: RefreshCw, category: "Security & System" },
   { id: "settings", label: "System Settings", icon: Settings, category: "Security & System" },

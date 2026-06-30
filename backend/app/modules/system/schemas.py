@@ -306,5 +306,53 @@ class InvitationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class SupportTicketCreate(BaseModel):
+    subject: str = Field(..., min_length=1, max_length=255)
+    description: str = Field(..., min_length=1, max_length=2048)
+    priority: str = Field("low", max_length=50)
+
+
+class SupportTicketResponse(BaseModel):
+    id: str
+    tenant_id: str
+    user_id: str
+    subject: str
+    description: str
+    priority: str
+    status: str
+    resolution_notes: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SupportTicketUpdate(BaseModel):
+    status: str = Field(..., max_length=50)
+    resolution_notes: Optional[str] = Field(None, max_length=2048)
+
+
+class SystemHealthService(BaseModel):
+    name: str
+    type: str
+    status: str
+    latency: str
+    uptime: str
+    details: str
+
+
+class SystemHealthTelemetry(BaseModel):
+    cpu: int
+    ram: int
+    latency: int
+    activeConnections: int
+
+
+class SystemHealthResponse(BaseModel):
+    services: list[SystemHealthService]
+    telemetry: SystemHealthTelemetry
+
+
+
 
 

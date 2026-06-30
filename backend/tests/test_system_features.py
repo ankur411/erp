@@ -697,5 +697,120 @@ async def test_provision_tenant(client, db_session):
         app.dependency_overrides.clear()
 
 
+@pytest.mark.asyncio
+async def test_support_tickets_lifecycle(client, db_session):
+    """
+    Test creation, listing, and updates of support tickets.
+    """
+    # 1. Setup organization and admin
+    org = Organization(name="Ticket Org", slug="ticket-org", clerk_org_id="org_ticket_123", status="active")
+    db_session.add(org)
+    await db_session.commit()
+    await db_session.refresh(org)
+
+    async def mock_require_org_ticket():
+        return UserSession(
+            user_id="usr_ticket_user",
+            email="user@ticket.com",
+            tenant_id=org.id,
+            role="org:admin"
+        )
+
+    app.dependency_overrides[require_org] = mock_require_org_ticket
+
+    # Create ticket (Org User context)
+    payload = {
+        "subject": "System is down",
+        "description": "I cannot access the inventory dashboard.",
+        "priority": "high"
+    }
+    resp = await client.post("/api/v1/system/support-tickets", json=payload)
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["subject"] == "System is down"
+    assert data["status"] == "open"
+    assert data["priority"] == "high"
+    ticket_id = data["id"]
+
+    # Try listing tickets as Org Admin (expect 403 or 401 since it requires platform_admin role verify)
+    # Clear overrides and mock regular user
+    async def mock_regular_user_auth():
+        return UserSession(
+            user_id="usr_ticket_user",
+            email="user@ticket.com",
+            tenant_id=org.id,
+            role="org:admin"
+        )
+    app.dependency_overrides[require_auth] = mock_regular_user_auth
+
+    list_resp = await client.get("/api/v1/system/support-tickets")
+    assert list_resp.status_code == 403
+
+    # Mock Platform Admin
+    async def mock_platform_admin_auth():
+        return UserSession(
+            user_id="usr_platform_admin",
+            email="admin@system.com",
+            tenant_id=None,
+            role="platform_admin"
+        )
+
+    admin_user = User(
+        clerk_user_id="usr_platform_admin",
+        email="admin@system.com",
+        first_name="Platform",
+        last_name="Admin",
+        role="platform_admin",
+        status="active"
+    )
+    db_session.add(admin_user)
+    await db_session.commit()
+
+    app.dependency_overrides[require_auth] = mock_platform_admin_auth
+
+    # List tickets as Platform Admin
+    list_resp2 = await client.get("/api/v1/system/support-tickets")
+    assert list_resp2.status_code == 200
+    list_data = list_resp2.json()
+    assert len(list_data) >= 1
+    assert any(t["id"] == ticket_id for t in list_data)
+
+    # Update ticket status & resolution notes
+    patch_payload = {
+        "status": "resolved",
+        "resolution_notes": "Redis instance restarted successfully."
+    }
+    patch_resp = await client.patch(f"/api/v1/system/support-tickets/{ticket_id}", json=patch_payload)
+    assert patch_resp.status_code == 200
+    patch_data = patch_resp.json()
+    assert patch_data["status"] == "resolved"
+    assert patch_data["resolution_notes"] == "Redis instance restarted successfully."
+
+    app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_system_health_endpoint(client):
+    """
+    Test fetching live system health and telemetry.
+    """
+    response = await client.get("/api/v1/system/health")
+    assert response.status_code == 200
+    data = response.json()
+    assert "services" in data
+    assert "telemetry" in data
+    
+    services = data["services"]
+    names = [s["name"] for s in services]
+    assert "TiDB Database" in names
+    assert "Redis Cache" in names
+    assert "File Storage" in names
+    
+    telemetry = data["telemetry"]
+    assert "cpu" in telemetry
+    assert "ram" in telemetry
+    assert "latency" in telemetry
+
+
 
 

@@ -134,3 +134,18 @@ class OrganizationInvitation(Base, HasTenant):
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
+class SupportTicket(Base, HasTenant):
+    __tablename__ = "support_tickets"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False)
+    subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(String(2048), nullable=False)
+    priority: Mapped[str] = mapped_column(String(50), default="low", nullable=False)  # low, medium, high, critical
+    status: Mapped[str] = mapped_column(String(50), default="open", nullable=False)  # open, in_progress, resolved, closed
+    resolution_notes: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
+
+    user: Mapped["User"] = relationship("User")
+
+
+

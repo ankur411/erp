@@ -3,11 +3,12 @@ from botocore.config import Config
 from typing import Optional
 from app.config import settings
 
+
 def get_s3_client():
     """
-    Initialize and return a boto3 client configured for Cloudflare R2.
+    Initialize and return a boto3 client configured for Cloudflare R2 or Supabase Storage.
     """
-    endpoint_url = f"https://{settings.R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+    endpoint_url = getattr(settings, "STORAGE_ENDPOINT_URL", None) or f"https://{settings.R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
     return boto3.client(
         "s3",
         endpoint_url=endpoint_url,
@@ -15,6 +16,7 @@ def get_s3_client():
         aws_secret_access_key=settings.R2_SECRET_ACCESS_KEY,
         config=Config(signature_version="s3v4")
     )
+
 
 def generate_presigned_upload_url(
     file_key: str,

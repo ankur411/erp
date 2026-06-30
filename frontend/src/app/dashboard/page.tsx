@@ -191,6 +191,13 @@ export default function DashboardPage() {
      email?: string;
   } | null>(null);
 
+  // Support tickets local states
+  const [showSupportModal, setShowSupportModal] = useState(false);
+  const [supportSubject, setSupportSubject] = useState("");
+  const [supportDescription, setSupportDescription] = useState("");
+  const [supportPriority, setSupportPriority] = useState<"low" | "medium" | "high">("medium");
+  const [isSubmittingSupport, setIsSubmittingSupport] = useState(false);
+
   const loadOrgUsersAndInvitations = async () => {
     setLoadingOrgUsers(true);
     try {
@@ -206,6 +213,40 @@ export default function DashboardPage() {
       console.error("Failed to load organization members", err);
     } finally {
       setLoadingOrgUsers(false);
+    }
+  };
+
+  const handleCreateSupportTicket = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!supportSubject.trim() || !supportDescription.trim()) {
+      alert("Please fill in both the subject and description.");
+      return;
+    }
+    setIsSubmittingSupport(true);
+    try {
+      const res = await authFetch("/api/v1/system/support-tickets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          subject: supportSubject,
+          description: supportDescription,
+          priority: supportPriority,
+        }),
+      });
+      if (res.ok) {
+        alert("Your issue has been reported successfully. Platform administrators will review it shortly.");
+        setShowSupportModal(false);
+        setSupportSubject("");
+        setSupportDescription("");
+        setSupportPriority("medium");
+      } else {
+        const errData = await res.json();
+        alert(`Failed to submit support ticket: ${errData.detail || "Unknown error"}`);
+      }
+    } catch (err: any) {
+      alert(`Error submitting support ticket: ${err.message}`);
+    } finally {
+      setIsSubmittingSupport(false);
     }
   };
 
@@ -607,6 +648,14 @@ export default function DashboardPage() {
               {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
           </div>
+
+          <button
+            onClick={() => setShowSupportModal(true)}
+            className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-750 text-zinc-700 dark:text-zinc-300 transition-all text-xs font-bold"
+          >
+            <HelpCircle className="h-3.5 w-3.5 text-zinc-500" />
+            <span>Report an Issue</span>
+          </button>
 
           <SafeSignOutButton 
             className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg border border-zinc-200 hover:bg-zinc-100 text-zinc-650 hover:text-zinc-950 dark:border-zinc-800 dark:hover:bg-zinc-850 dark:text-zinc-400 dark:hover:text-zinc-100 transition-all text-xs font-bold"
@@ -2281,6 +2330,74 @@ export default function DashboardPage() {
               >
                  Save Permissions
               </button>
+           </div>
+        </div>
+      )}
+
+      {/* 8. Report an Issue / Support Ticket Modal */}
+      {showSupportModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+           <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl w-full max-w-md p-6 space-y-4 shadow-xl">
+              <div className="flex justify-between items-center border-b border-zinc-150 dark:border-zinc-800 pb-3">
+                 <div className="flex items-center gap-2">
+                    <HelpCircle className="h-5 w-5 text-zinc-500 animate-pulse" />
+                    <h3 className="text-sm font-bold text-zinc-800 dark:text-zinc-100">Report an Issue</h3>
+                 </div>
+                 <button onClick={() => setShowSupportModal(false)} className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-205">✕</button>
+              </div>
+              <form onSubmit={handleCreateSupportTicket} className="space-y-4 text-xs">
+                 <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 block uppercase">Issue Subject</label>
+                    <input
+                       type="text"
+                       required
+                       value={supportSubject}
+                       onChange={(e) => setSupportSubject(e.target.value)}
+                       placeholder="e.g. Purchase order fails to calculate taxes"
+                       className="w-full text-xs border rounded p-2 bg-zinc-55 dark:bg-zinc-800 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+                    />
+                 </div>
+                 <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 block uppercase">Description & Details</label>
+                    <textarea
+                       rows={4}
+                       required
+                       value={supportDescription}
+                       onChange={(e) => setSupportDescription(e.target.value)}
+                       placeholder="Please specify exact steps to reproduce, error codes, or expected behavior..."
+                       className="w-full text-xs border rounded p-2 bg-zinc-55 dark:bg-zinc-800 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-500 resize-none"
+                    />
+                 </div>
+                 <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 block uppercase">Priority level</label>
+                    <select
+                       value={supportPriority}
+                       onChange={(e) => setSupportPriority(e.target.value as any)}
+                       className="w-full text-xs border rounded p-2 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100"
+                    >
+                       <option value="low">Low - General Question / Feedback</option>
+                       <option value="medium">Medium - Functional Issue / Workaround available</option>
+                       <option value="high">High - System Blocker / Outage</option>
+                    </select>
+                 </div>
+                 
+                 <div className="flex justify-end gap-2 pt-3 border-t border-zinc-150 dark:border-zinc-800">
+                    <button
+                       type="button"
+                       onClick={() => setShowSupportModal(false)}
+                       className="px-4 py-2 border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-650 dark:text-zinc-400 rounded-lg font-bold"
+                    >
+                       Cancel
+                    </button>
+                    <button
+                       type="submit"
+                       disabled={isSubmittingSupport}
+                       className="px-4 py-2 bg-zinc-900 hover:bg-zinc-800 text-white dark:bg-white dark:text-black dark:hover:bg-zinc-100 rounded-lg font-bold disabled:opacity-50"
+                    >
+                       {isSubmittingSupport ? "Reporting..." : "Submit Ticket"}
+                    </button>
+                 </div>
+              </form>
            </div>
         </div>
       )}
