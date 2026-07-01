@@ -2,7 +2,7 @@ import base64
 import hashlib
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from cryptography.fernet import Fernet
 from sqlalchemy import select, delete
@@ -11,7 +11,8 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.database import SessionLocal, tenant_context, user_context
-from app.models.integration import Integration, IntegrationSyncHistory, Customer, Employee, Attendance
+from app.models.integration import Integration, IntegrationSyncHistory, Customer, Employee
+from app.models.sales import SalesOrder, SalesOrderItem
 from app.models.supplier import Supplier
 from app.models.inventory import Product
 from app.models.purchase import PurchaseOrder, PurchaseOrderItem
@@ -91,7 +92,7 @@ async def execute_sync(
     if not connector:
         sync_run.status = "failed"
         sync_run.error_message = f"Connector '{integration.type}' not supported."
-        sync_run.completed_at = datetime.utcnow()
+        sync_run.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
         await db.commit()
         tenant_context.reset(t_token)
         user_context.reset(u_token)
@@ -149,11 +150,11 @@ async def execute_sync(
             "created_ids": created_ids,
             "updated_original_values": updated_original_values
         }
-        sync_run.completed_at = datetime.utcnow()
+        sync_run.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
         await db.commit()
 
         # Update integration connected date
-        integration.last_connected_at = datetime.utcnow()
+        integration.last_connected_at = datetime.now(timezone.utc).replace(tzinfo=None)
         integration.status = "connected"
         integration.error_message = None
         await db.commit()
@@ -162,7 +163,7 @@ async def execute_sync(
         await db.rollback()
         sync_run.status = "failed"
         sync_run.error_message = f"Sync failed: {str(e)}"
-        sync_run.completed_at = datetime.utcnow()
+        sync_run.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
         await db.commit()
 
         integration.status = "error"
@@ -335,12 +336,26 @@ async def _save_entity_record(
             await db.flush()
             return True, "create", new_emp.id, {}
 
-    elif target == "attendance":
-        email = record.get("employee_email")
-        date_str = record.get("date")
-        if not email or not date_str:
+    elif target == "sales_orders":
+        so_number = record.get("so_number")
+        customer_email = record.get("customer_email")
+        if not so_number or not customer_email:
             return False, "skip", "", {}
-        q = select(Attendance).where(Attendance.employee_email == email, Attendance.date == date_str)
+
+        # Find Customer by email
+        cust_q = select(Customer).where(Customer.email == customer_email)
+        cust_res = await db.execute(cust_q)
+        customer = cust_res.scalar_one_or_none()
+        if not customer:
+            customer = Customer(
+                name=customer_email.split("@")[0].capitalize(),
+                email=customer_email,
+                tenant_id=tenant_id
+            )
+            db.add(customer)
+            await db.flush()
+
+        q = select(SalesOrder).where(SalesOrder.so_number == so_number).options(selectinload(SalesOrder.items))
         res = await db.execute(q)
         existing = res.scalar_one_or_none()
 
@@ -348,25 +363,46 @@ async def _save_entity_record(
             if strategy == "skip":
                 return False, "skip", "", {}
             original = {
-                "check_in": existing.check_in, "check_out": existing.check_out,
-                "status": existing.status
+                "status": existing.status,
+                "total_amount": float(existing.total_amount)
             }
-            existing.check_in = record.get("check_in")
-            existing.check_out = record.get("check_out")
-            existing.status = record.get("status", "present")
+            existing.status = record.get("status", "draft")
+            existing.total_amount = float(record.get("total_amount", 0.00))
             return True, "update", existing.id, original
         else:
-            new_att = Attendance(
-                employee_email=email,
-                date=date_str,
-                check_in=record.get("check_in"),
-                check_out=record.get("check_out"),
-                status=record.get("status", "present"),
-                tenant_id=tenant_id
+            items_list = []
+            total_amount = 0.00
+            for item in record.get("items", []):
+                sku = item.get("sku")
+                prod_stmt = select(Product).where(Product.sku == sku)
+                prod_res = await db.execute(prod_stmt)
+                product = prod_res.scalars().first()
+                if not product:
+                    continue
+                qty = int(item.get("quantity", 1))
+                price = float(item.get("unit_price", product.selling_price))
+                total_item_price = qty * price
+                total_amount += total_item_price
+                items_list.append(
+                    SalesOrderItem(
+                        product_id=product.id,
+                        quantity=qty,
+                        unit_price=price,
+                        total_price=total_item_price
+                    )
+                )
+
+            new_so = SalesOrder(
+                so_number=so_number,
+                customer_id=customer.id,
+                status=record.get("status", "draft"),
+                total_amount=float(record.get("total_amount", total_amount)),
+                tenant_id=tenant_id,
+                items=items_list
             )
-            db.add(new_att)
+            db.add(new_so)
             await db.flush()
-            return True, "create", new_att.id, {}
+            return True, "create", new_so.id, {}
 
     elif target == "purchase_orders":
         po_number = record.get("po_number")
@@ -546,7 +582,7 @@ async def _save_entity_record(
                 payment_method=record.get("payment_method", "BANK_TRANSFER"),
                 status=record.get("status", "completed"),
                 transaction_reference=txn_ref,
-                paid_at=paid_at or datetime.utcnow(),
+                paid_at=paid_at or datetime.now(timezone.utc).replace(tzinfo=None),
                 tenant_id=tenant_id
             )
             db.add(new_pay)
@@ -632,8 +668,8 @@ async def rollback_sync(db: AsyncSession, tenant_id: str, sync_id: str) -> Integ
                 await db.execute(delete(Product).where(Product.id.in_(created_ids)))
             elif target == "employees":
                 await db.execute(delete(Employee).where(Employee.id.in_(created_ids)))
-            elif target == "attendance":
-                await db.execute(delete(Attendance).where(Attendance.id.in_(created_ids)))
+            elif target == "sales_orders":
+                await db.execute(delete(SalesOrder).where(SalesOrder.id.in_(created_ids)))
             elif target == "purchase_orders":
                 # Will cascade delete items automatically due to model cascade
                 await db.execute(delete(PurchaseOrder).where(PurchaseOrder.id.in_(created_ids)))
@@ -692,14 +728,13 @@ async def rollback_sync(db: AsyncSession, tenant_id: str, sync_id: str) -> Integ
                     ent.role = original.get("role")
                     ent.department_name = original.get("department_name")
 
-            elif target == "attendance":
-                q = select(Attendance).where(Attendance.id == entity_id)
+            elif target == "sales_orders":
+                q = select(SalesOrder).where(SalesOrder.id == entity_id)
                 res = await db.execute(q)
                 ent = res.scalar_one_or_none()
                 if ent:
-                    ent.check_in = original.get("check_in")
-                    ent.check_out = original.get("check_out")
                     ent.status = original.get("status")
+                    ent.total_amount = original.get("total_amount")
 
             elif target == "purchase_orders":
                 q = select(PurchaseOrder).options(selectinload(PurchaseOrder.items)).where(PurchaseOrder.id == entity_id)
@@ -803,7 +838,7 @@ async def run_scheduled_syncs():
                 last_run = sres.scalar_one_or_none()
 
                 should_sync = False
-                now = datetime.utcnow()
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
 
                 if not last_run:
                     should_sync = True
@@ -828,3 +863,37 @@ async def run_scheduled_syncs():
                         )
                     except Exception as sync_err:
                         logger.error(f"Scheduled sync execution error: {str(sync_err)}")
+
+
+async def forward_webhook_to_n8n(tenant_id: str, event_name: str, data: dict):
+    """
+    Forward backend events to the configured outgoing webhook URL of any active webhook integration.
+    """
+    import httpx
+    async with SessionLocal() as db:
+        q = select(Integration).where(
+            Integration.tenant_id == tenant_id,
+            Integration.is_active == True,
+            Integration.connection_method == "webhook"
+        )
+        res = await db.execute(q)
+        integrations = res.scalars().all()
+
+        for integration in integrations:
+            config = integration.config or {}
+            outgoing_url = config.get("outgoing_webhook_url")
+            if not outgoing_url:
+                continue
+
+            payload = {
+                "event": event_name,
+                "tenant_id": tenant_id,
+                "data": data,
+                "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+            }
+
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    await client.post(outgoing_url, json=payload)
+            except Exception as e:
+                logger.error(f"Failed to forward webhook to {outgoing_url}: {str(e)}")

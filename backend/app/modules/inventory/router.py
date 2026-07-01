@@ -63,6 +63,23 @@ async def create_product(
     db.add(db_obj)
     await db.commit()
     await db.refresh(db_obj)
+
+    try:
+        from app.modules.integrations.services import forward_webhook_to_n8n
+        import asyncio
+        asyncio.create_task(forward_webhook_to_n8n(
+            tenant_id=db_obj.tenant_id,
+            event_name="product.created",
+            data={
+                "id": db_obj.id,
+                "sku": db_obj.sku,
+                "name": db_obj.name,
+                "selling_price": float(db_obj.selling_price)
+            }
+        ))
+    except Exception:
+        pass
+
     return db_obj
 
 @router.get("/products", response_model=List[ProductResponse], dependencies=[require_viewer])
@@ -112,6 +129,23 @@ async def update_product(
 
     await db.commit()
     await db.refresh(db_obj)
+
+    try:
+        from app.modules.integrations.services import forward_webhook_to_n8n
+        import asyncio
+        asyncio.create_task(forward_webhook_to_n8n(
+            tenant_id=db_obj.tenant_id,
+            event_name="product.updated",
+            data={
+                "id": db_obj.id,
+                "sku": db_obj.sku,
+                "name": db_obj.name,
+                "selling_price": float(db_obj.selling_price)
+            }
+        ))
+    except Exception:
+        pass
+
     return db_obj
 
 

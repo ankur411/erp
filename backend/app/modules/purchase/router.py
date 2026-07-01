@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select, func, or_
 from sqlalchemy.orm import selectinload
@@ -23,7 +23,7 @@ require_admin = Depends(RequireRole(["Organization Owner", "Super Admin"]))
 
 async def generate_po_number(db: AsyncSession) -> str:
     # Format: PO-YYYYMMDD-XXXX where XXXX is incremental sequence
-    today_str = datetime.utcnow().strftime("%Y%m%d")
+    today_str = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y%m%d")
     prefix = f"PO-{today_str}-"
     
     # Query count of POs created today
@@ -96,7 +96,26 @@ async def create_purchase_order(
         selectinload(PurchaseOrder.supplier)
     )
     res = await db.execute(stmt)
-    return res.scalars().one()
+    loaded_po = res.scalars().one()
+
+    try:
+        from app.modules.integrations.services import forward_webhook_to_n8n
+        import asyncio
+        asyncio.create_task(forward_webhook_to_n8n(
+            tenant_id=loaded_po.tenant_id,
+            event_name="purchase_order.created",
+            data={
+                "id": loaded_po.id,
+                "po_number": loaded_po.po_number,
+                "supplier_email": loaded_po.supplier.email,
+                "status": loaded_po.status,
+                "total_amount": float(loaded_po.total_amount)
+            }
+        ))
+    except Exception:
+        pass
+
+    return loaded_po
 
 @router.get("/", response_model=List[PurchaseOrderResponse], dependencies=[require_viewer])
 async def list_purchase_orders(
@@ -182,7 +201,7 @@ async def update_po_status(
             
         if new_status == "approved":
             po.approved_by = current_user.user_id
-            po.approved_at = datetime.utcnow()
+            po.approved_at = datetime.now(timezone.utc).replace(tzinfo=None)
             
     elif new_status == "cancelled":
         if old_status in ["completed", "cancelled"]:
@@ -194,6 +213,24 @@ async def update_po_status(
     po.status = new_status
     await db.commit()
     await db.refresh(po)
+
+    try:
+        from app.modules.integrations.services import forward_webhook_to_n8n
+        import asyncio
+        asyncio.create_task(forward_webhook_to_n8n(
+            tenant_id=po.tenant_id,
+            event_name="purchase_order.updated",
+            data={
+                "id": po.id,
+                "po_number": po.po_number,
+                "supplier_email": po.supplier.email,
+                "status": po.status,
+                "total_amount": float(po.total_amount)
+            }
+        ))
+    except Exception:
+        pass
+
     return po
 
 @router.post("/{po_id}/receive", response_model=PurchaseOrderResponse)
@@ -269,4 +306,22 @@ async def receive_purchase_order(
     po.status = "completed"
     await db.commit()
     await db.refresh(po)
+
+    try:
+        from app.modules.integrations.services import forward_webhook_to_n8n
+        import asyncio
+        asyncio.create_task(forward_webhook_to_n8n(
+            tenant_id=po.tenant_id,
+            event_name="purchase_order.updated",
+            data={
+                "id": po.id,
+                "po_number": po.po_number,
+                "supplier_email": po.supplier.email,
+                "status": po.status,
+                "total_amount": float(po.total_amount)
+            }
+        ))
+    except Exception:
+        pass
+
     return po

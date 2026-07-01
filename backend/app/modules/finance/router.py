@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select, func, or_
 from sqlalchemy.orm import selectinload
@@ -21,7 +21,7 @@ require_accountant = Depends(RequireRole(["Accountant", "Organization Owner", "S
 
 async def generate_invoice_number(db: AsyncSession) -> str:
     # Format: INV-YYYYMMDD-XXXX where XXXX is incremental sequence
-    today_str = datetime.utcnow().strftime("%Y%m%d")
+    today_str = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y%m%d")
     prefix = f"INV-{today_str}-"
     
     stmt = select(func.count(Invoice.id)).where(Invoice.invoice_number.like(f"{prefix}%"))
@@ -73,7 +73,25 @@ async def create_invoice(
         selectinload(Invoice.payments)
     )
     res = await db.execute(stmt)
-    return res.scalars().one()
+    loaded_inv = res.scalars().one()
+
+    try:
+        from app.modules.integrations.services import forward_webhook_to_n8n
+        import asyncio
+        asyncio.create_task(forward_webhook_to_n8n(
+            tenant_id=loaded_inv.tenant_id,
+            event_name="invoice.created",
+            data={
+                "id": loaded_inv.id,
+                "invoice_number": loaded_inv.invoice_number,
+                "total_amount": float(loaded_inv.total_amount),
+                "status": loaded_inv.status
+            }
+        ))
+    except Exception:
+        pass
+
+    return loaded_inv
 
 @router.get("/invoices", response_model=List[InvoiceResponse], dependencies=[require_viewer])
 async def list_invoices(
@@ -160,4 +178,23 @@ async def record_payment(
         
     await db.commit()
     await db.refresh(payment)
+
+    try:
+        from app.modules.integrations.services import forward_webhook_to_n8n
+        import asyncio
+        asyncio.create_task(forward_webhook_to_n8n(
+            tenant_id=payment.tenant_id,
+            event_name="payment.completed",
+            data={
+                "id": payment.id,
+                "invoice_id": payment.invoice_id,
+                "amount": float(payment.amount),
+                "payment_method": payment.payment_method,
+                "transaction_reference": payment.transaction_reference,
+                "status": payment.status
+            }
+        ))
+    except Exception:
+        pass
+
     return payment

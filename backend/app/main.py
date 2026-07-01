@@ -10,6 +10,7 @@ from app.modules.finance.router import router as finance_router
 from app.modules.system.router import router as system_router
 from app.modules.imports.router import router as imports_router
 from app.modules.integrations.router import router as integrations_router
+from app.modules.sales.router import router as sales_router
 import asyncio
 from app.modules.integrations.services import run_scheduled_syncs
 from contextlib import asynccontextmanager
@@ -101,3 +102,4 @@ app.include_router(purchase_router, prefix=settings.API_V1_STR)
 app.include_router(finance_router, prefix=settings.API_V1_STR)
 app.include_router(imports_router, prefix=settings.API_V1_STR)
 app.include_router(integrations_router, prefix=settings.API_V1_STR)
+app.include_router(sales_router, prefix=settings.API_V1_STR)

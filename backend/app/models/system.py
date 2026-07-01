@@ -1,12 +1,15 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
-from sqlalchemy import String, DateTime, ForeignKey, JSON, BigInteger
+from sqlalchemy import String, DateTime, ForeignKey, JSON, BigInteger, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base, HasTenant
 
 def generate_uuid() -> str:
     return str(uuid.uuid4())
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 class Organization(Base):
     __tablename__ = "organizations"
@@ -18,10 +21,11 @@ class Organization(Base):
     is_custom_domain: Mapped[bool] = mapped_column(default=False, nullable=False)
     clerk_org_id: Mapped[Optional[str]] = mapped_column(String(255), unique=True, index=True, nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="active", nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
     access_config: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
     users: Mapped[list["User"]] = relationship("User", back_populates="organization", cascade="all, delete-orphan")
+
 
 class User(Base):
     __tablename__ = "users"
@@ -38,7 +42,8 @@ class User(Base):
     department_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("organization_departments.id"), nullable=True)
     last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     page_permissions: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    password_change_required: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
     organization: Mapped[Organization] = relationship("Organization", back_populates="users")
     department: Mapped[Optional["OrganizationDepartment"]] = relationship("OrganizationDepartment")
@@ -79,7 +84,7 @@ class Plan(Base):
     cta: Mapped[str] = mapped_column(String(100), default="Start 14-Day Free Trial", nullable=False)
     trial_days: Mapped[int] = mapped_column(default=14, nullable=False)
     limits: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True) # e.g. {"warehouses": 2, "suppliers": 50}
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
 
 class ApiKey(Base, HasTenant):
@@ -107,8 +112,8 @@ class OrganizationRequest(Base):
     notes: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="pending", nullable=False) # pending, approved, rejected
     rejection_notes: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
 
 class OrganizationDepartment(Base, HasTenant):

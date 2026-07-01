@@ -44,7 +44,7 @@ class WorkflowListResponse(BaseModel):
     workflows: List[WorkflowResponse]
 
 class ManualImportRequest(BaseModel):
-    target_type: str = Field(..., description="customers, suppliers, products, invoices, purchase_orders, payments, employees, attendance, documents")
+    target_type: str = Field(..., description="customers, suppliers, products, invoices, purchase_orders, payments, employees, sales_orders, documents")
     duplicate_strategy: str = Field("skip", description="skip or overwrite")
     workflow_id: Optional[str] = Field(None, description="Selected n8n workflow ID to execute")
 

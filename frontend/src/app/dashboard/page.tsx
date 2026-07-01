@@ -35,7 +35,13 @@ import {
   Undo2,
   Power,
   PowerOff,
-  Copy
+  Copy,
+  Lock,
+  Key,
+  Settings,
+  User,
+  ShoppingBag,
+  Loader2
 } from "lucide-react";
 import { SafeSignOutButton } from "@/components/SafeSignOutButton";
 import { useApi } from "@/lib/api";
@@ -56,7 +62,7 @@ import {
 import { useERPStore, Supplier, Product, PurchaseOrder, Invoice, Payment } from "@/lib/store";
 import { useRouter } from "next/navigation";
 
-type TabType = "dashboard" | "suppliers" | "products" | "inventory" | "purchase" | "finance" | "tenant_control" | "integrations" | "org_admin";
+type TabType = "dashboard" | "suppliers" | "products" | "inventory" | "purchase" | "sales_orders" | "finance" | "tenant_control" | "integrations" | "org_admin";
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -189,7 +195,42 @@ export default function DashboardPage() {
      first_name?: string;
      last_name?: string;
      email?: string;
+     password_change_required?: boolean;
   } | null>(null);
+
+  // Connection form outgoing url state
+  const [connOutgoingUrl, setConnOutgoingUrl] = useState("");
+
+  // Sales Orders states
+  const [salesOrders, setSalesOrders] = useState<any[]>([]);
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [loadingSalesOrders, setLoadingSalesOrders] = useState(false);
+  const [selectedSalesOrder, setSelectedSalesOrder] = useState<any | null>(null);
+  const [salesOrderSearch, setSalesOrderSearch] = useState("");
+  const [salesOrderStatusFilter, setSalesOrderStatusFilter] = useState("");
+  const [showCreateSOModal, setShowCreateSOModal] = useState(false);
+  const [soCustomerId, setSoCustomerId] = useState("");
+  const [soItems, setSoItems] = useState<{ product_id: string; quantity: number; unit_price: number }[]>([]);
+  const [isSubmittingSO, setIsSubmittingSO] = useState(false);
+  const [showDeliverModal, setShowDeliverModal] = useState(false);
+  const [deliverWarehouseId, setDeliverWarehouseId] = useState("");
+  const [isSubmittingDeliver, setIsSubmittingDeliver] = useState(false);
+
+  // Profile Settings Modal states
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [profileFirstName, setProfileFirstName] = useState("");
+  const [profileLastName, setProfileLastName] = useState("");
+  const [profileCurrentPassword, setProfileCurrentPassword] = useState("");
+  const [profileNewPassword, setProfileNewPassword] = useState("");
+  const [profileConfirmNewPassword, setProfileConfirmNewPassword] = useState("");
+  const [isSubmittingProfile, setIsSubmittingProfile] = useState(false);
+
+  // Force Password Change Modal states (first-time login)
+  const [showForcePasswordChangeModal, setShowForcePasswordChangeModal] = useState(false);
+  const [forceCurrentPassword, setForceCurrentPassword] = useState("");
+  const [forceNewPassword, setForceNewPassword] = useState("");
+  const [forceConfirmNewPassword, setForceConfirmNewPassword] = useState("");
+  const [isSubmittingForcePassword, setIsSubmittingForcePassword] = useState(false);
 
   // Support tickets local states
   const [showSupportModal, setShowSupportModal] = useState(false);
@@ -197,6 +238,132 @@ export default function DashboardPage() {
   const [supportDescription, setSupportDescription] = useState("");
   const [supportPriority, setSupportPriority] = useState<"low" | "medium" | "high">("medium");
   const [isSubmittingSupport, setIsSubmittingSupport] = useState(false);
+
+  const loadSalesOrders = async () => {
+    setLoadingSalesOrders(true);
+    try {
+      let url = "/api/v1/sales-orders/";
+      const params: string[] = [];
+      if (salesOrderSearch) params.push(`search=${encodeURIComponent(salesOrderSearch)}`);
+      if (salesOrderStatusFilter) params.push(`status=${encodeURIComponent(salesOrderStatusFilter)}`);
+      if (params.length > 0) url += `?${params.join("&")}`;
+
+      const res = await authFetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        setSalesOrders(data.items || []);
+      }
+    } catch (err) {
+      console.error("Failed to load sales orders", err);
+    } finally {
+      setLoadingSalesOrders(false);
+    }
+  };
+
+  const loadCustomers = async () => {
+    try {
+      const res = await authFetch("/api/v1/sales-orders/customers");
+      if (res.ok) {
+        setCustomers(await res.json());
+      }
+    } catch (err) {
+      console.error("Failed to load customers", err);
+    }
+  };
+
+  const handleCreateSalesOrder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!soCustomerId) {
+      alert("Please select a customer.");
+      return;
+    }
+    if (soItems.length === 0) {
+      alert("Please add at least one product item.");
+      return;
+    }
+    setIsSubmittingSO(true);
+    try {
+      const res = await authFetch("/api/v1/sales-orders/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customer_id: soCustomerId,
+          items: soItems.map(item => ({
+            product_id: item.product_id,
+            quantity: Number(item.quantity),
+            unit_price: Number(item.unit_price)
+          }))
+        })
+      });
+      if (res.ok) {
+        alert("Sales order created successfully!");
+        setShowCreateSOModal(false);
+        setSoCustomerId("");
+        setSoItems([]);
+        loadSalesOrders();
+      } else {
+        const errData = await res.json();
+        alert(`Failed to create sales order: ${errData.detail || "Unknown error"}`);
+      }
+    } catch (err: any) {
+      alert(`Error creating sales order: ${err.message}`);
+    } finally {
+      setIsSubmittingSO(false);
+    }
+  };
+
+  const handleUpdateSOStatus = async (soId: string, status: "approved" | "cancelled") => {
+    try {
+      const res = await authFetch(`/api/v1/sales-orders/${soId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status })
+      });
+      if (res.ok) {
+        alert(`Sales order status updated to ${status}.`);
+        loadSalesOrders();
+        const updated = await res.json();
+        if (selectedSalesOrder && selectedSalesOrder.id === soId) {
+          setSelectedSalesOrder(updated);
+        }
+      } else {
+        const errData = await res.json();
+        alert(`Failed to update status: ${errData.detail || "Unknown error"}`);
+      }
+    } catch (err: any) {
+      alert(`Error updating status: ${err.message}`);
+    }
+  };
+
+  const handleDeliverSO = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedSalesOrder) return;
+    if (!deliverWarehouseId) {
+      alert("Please select a warehouse for delivery.");
+      return;
+    }
+    setIsSubmittingDeliver(true);
+    try {
+      const res = await authFetch(`/api/v1/sales-orders/${selectedSalesOrder.id}/deliver?warehouse_id=${deliverWarehouseId}`, {
+        method: "POST"
+      });
+      if (res.ok) {
+        alert("Sales order delivered and stock decremented successfully!");
+        setShowDeliverModal(false);
+        setDeliverWarehouseId("");
+        loadSalesOrders();
+        const updated = await res.json();
+        setSelectedSalesOrder(updated);
+      } else {
+        const errData = await res.json();
+        alert(`Failed to deliver sales order: ${errData.detail || "Unknown error"}`);
+      }
+    } catch (err: any) {
+      alert(`Error executing delivery: ${err.message}`);
+    } finally {
+      setIsSubmittingDeliver(false);
+    }
+  };
 
   const loadOrgUsersAndInvitations = async () => {
     setLoadingOrgUsers(true);
@@ -250,6 +417,102 @@ export default function DashboardPage() {
     }
   };
 
+  const handleUpdateProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (profileNewPassword && profileNewPassword !== profileConfirmNewPassword) {
+      alert("New passwords do not match.");
+      return;
+    }
+    if (profileNewPassword && !profileCurrentPassword) {
+      alert("Please enter your current password to change your password.");
+      return;
+    }
+
+    setIsSubmittingProfile(true);
+    try {
+      const res = await authFetch("/api/v1/system/auth/profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          first_name: profileFirstName,
+          last_name: profileLastName,
+          current_password: profileNewPassword ? profileCurrentPassword : null,
+          new_password: profileNewPassword || null
+        })
+      });
+
+      if (res.ok) {
+        const updatedData = await res.json();
+        setUserProfile({
+          first_name: updatedData.first_name,
+          last_name: updatedData.last_name,
+          email: updatedData.email,
+          password_change_required: updatedData.password_change_required
+        });
+        alert("Profile updated successfully!");
+        setShowProfileModal(false);
+        setProfileCurrentPassword("");
+        setProfileNewPassword("");
+        setProfileConfirmNewPassword("");
+      } else {
+        const errData = await res.json();
+        alert(`Failed to update profile: ${errData.detail || "Unknown error"}`);
+      }
+    } catch (err: any) {
+      alert(`Error updating profile: ${err.message}`);
+    } finally {
+      setIsSubmittingProfile(false);
+    }
+  };
+
+  const handleForcePasswordChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!forceCurrentPassword) {
+      alert("Please enter your current password.");
+      return;
+    }
+    if (!forceNewPassword) {
+      alert("Please enter a new password.");
+      return;
+    }
+    if (forceNewPassword !== forceConfirmNewPassword) {
+      alert("Passwords do not match.");
+      return;
+    }
+
+    setIsSubmittingForcePassword(true);
+    try {
+      const res = await authFetch("/api/v1/system/auth/profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          current_password: forceCurrentPassword,
+          new_password: forceNewPassword
+        })
+      });
+
+      if (res.ok) {
+        const updatedData = await res.json();
+        setUserProfile(prev => prev ? {
+          ...prev,
+          password_change_required: updatedData.password_change_required
+        } : null);
+        alert("Password updated successfully! Welcome to SupplierERP.");
+        setShowForcePasswordChangeModal(false);
+        setForceCurrentPassword("");
+        setForceNewPassword("");
+        setForceConfirmNewPassword("");
+      } else {
+        const errData = await res.json();
+        alert(`Failed to update password: ${errData.detail || "Unknown error"}`);
+      }
+    } catch (err: any) {
+      alert(`Error updating password: ${err.message}`);
+    } finally {
+      setIsSubmittingForcePassword(false);
+    }
+  };
+
   React.useEffect(() => {
     const initData = async () => {
       try {
@@ -260,8 +523,12 @@ export default function DashboardPage() {
           setUserProfile({
             first_name: authData.first_name,
             last_name: authData.last_name,
-            email: authData.email
+            email: authData.email,
+            password_change_required: authData.password_change_required
           });
+          if (authData.password_change_required) {
+            setShowForcePasswordChangeModal(true);
+          }
           useERPStore.setState({
             currentOrg: authData.org_name || "No Organization",
             userRole: authData.role,
@@ -331,8 +598,17 @@ export default function DashboardPage() {
       loadIntegrations();
     } else if (activeTab === "org_admin") {
       loadOrgUsersAndInvitations();
+    } else if (activeTab === "sales_orders") {
+      loadSalesOrders();
+      loadCustomers();
     }
   }, [activeTab]);
+
+  React.useEffect(() => {
+    if (activeTab === "sales_orders") {
+      loadSalesOrders();
+    }
+  }, [salesOrderSearch, salesOrderStatusFilter]);
 
   const handleTestConnection = async () => {
     if (!connBaseUrl) {
@@ -384,7 +660,8 @@ export default function DashboardPage() {
         type: "n8n",
         connection_method: connMethod,
         config: {
-          n8n_base_url: connBaseUrl
+          n8n_base_url: connBaseUrl,
+          outgoing_webhook_url: connOutgoingUrl
         },
         secrets: {
           api_key: connApiKey
@@ -399,6 +676,7 @@ export default function DashboardPage() {
         setConnName("");
         setConnBaseUrl("");
         setConnApiKey("");
+        setConnOutgoingUrl("");
         loadIntegrations();
       } else {
         const errData = await res.json();
@@ -524,7 +802,7 @@ export default function DashboardPage() {
 
   const isModuleEnabled = (tabId: string) => {
     if (userRole === "org:admin" || userRole === "platform_admin") return true;
-    if (tabId === "dashboard") return true;
+    if (tabId === "dashboard" || tabId === "sales_orders") return true;
     if (tabId === "org_admin" || tabId === "integrations") return false;
     return !!pagePermissions?.[tabId];
   };
@@ -594,6 +872,7 @@ export default function DashboardPage() {
               { id: "products", label: "Product Catalog", icon: Package },
               { id: "inventory", label: "Inventory & Stock", icon: WarehouseIcon },
               { id: "purchase", label: "Purchase Orders", icon: FileText },
+              { id: "sales_orders", label: "Sales Orders", icon: ShoppingBag },
               { id: "finance", label: "Finance & Invoices", icon: CreditCard },
               { id: "integrations", label: "n8n Integrations", icon: Link2 },
               ...(userRole === "org:admin" || userRole === "platform_admin"
@@ -626,21 +905,30 @@ export default function DashboardPage() {
         {/* User / Setting Info bottom */}
         <div className="p-4 border-t border-zinc-200 dark:border-zinc-800 flex flex-col gap-3 bg-zinc-50/50 dark:bg-zinc-900/50">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="h-7 w-7 rounded-full bg-zinc-300 dark:bg-zinc-700 flex items-center justify-center font-bold text-xs">
+            <button 
+              onClick={() => {
+                setProfileFirstName(userProfile?.first_name || "");
+                setProfileLastName(userProfile?.last_name || "");
+                setShowProfileModal(true);
+              }}
+              className="flex items-center gap-2 text-left hover:opacity-80 transition-opacity focus:outline-none"
+            >
+              <div className="h-7 w-7 rounded-full bg-zinc-300 dark:bg-zinc-700 flex items-center justify-center font-bold text-xs text-zinc-800 dark:text-zinc-200">
                 {userProfile?.first_name || userProfile?.last_name
                   ? `${userProfile.first_name?.[0] || ""}${userProfile.last_name?.[0] || ""}`.toUpperCase()
                   : "U"}
               </div>
               <div>
-                <div className="text-xs font-semibold leading-none">
+                <div className="text-xs font-semibold leading-none text-zinc-900 dark:text-zinc-100">
                   {userProfile?.first_name || userProfile?.last_name
                     ? `${userProfile.first_name || ""} ${userProfile.last_name || ""}`.trim()
                     : userProfile?.email || "User"}
                 </div>
-                <span className="text-[10px] text-zinc-400 uppercase tracking-wide font-medium">Local Auth Session</span>
+                <span className="text-[10px] text-zinc-450 dark:text-zinc-500 font-medium block mt-0.5 max-w-[120px] truncate">
+                  {userProfile?.email || ""}
+                </span>
               </div>
-            </div>
+            </button>
             <button 
               onClick={() => setDarkMode(!darkMode)}
               className="p-1.5 rounded hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-400 dark:text-zinc-500"
@@ -700,9 +988,58 @@ export default function DashboardPage() {
 
         {/* CONTENT COMPONENT CONTROLLER */}
         <div className="p-6 flex-1 overflow-auto">
-          
-          {/* TAB 1: DASHBOARD */}
-          {activeTab === "dashboard" && (
+          {loading ? (
+            <div className="space-y-6 animate-pulse">
+              {/* Stat Metric Cards Skeleton */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                {[1, 2, 3, 4].map((i) => (
+                  <div key={i} className="p-5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl space-y-3">
+                    <div className="flex justify-between items-center">
+                      <div className="h-3.5 w-24 bg-zinc-250 dark:bg-zinc-800 rounded" />
+                      <div className="h-4 w-4 bg-zinc-200 dark:bg-zinc-800 rounded" />
+                    </div>
+                    <div className="h-8 w-16 bg-zinc-300 dark:bg-zinc-700 rounded" />
+                    <div className="h-3 w-32 bg-zinc-150 dark:bg-zinc-850 rounded" />
+                  </div>
+                ))}
+              </div>
+
+              {/* Main Section Skeleton */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="lg:col-span-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5 space-y-4">
+                  <div className="flex justify-between items-center">
+                    <div className="h-4 w-36 bg-zinc-200 dark:bg-zinc-800 rounded" />
+                    <div className="h-8 w-24 bg-zinc-200 dark:bg-zinc-800 rounded-lg" />
+                  </div>
+                  <div className="space-y-3 pt-2">
+                    {[1, 2, 3, 4, 5].map((i) => (
+                      <div key={i} className="flex justify-between items-center py-3 border-b border-zinc-100 dark:border-zinc-800 last:border-0">
+                        <div className="space-y-1.5">
+                          <div className="h-3.5 w-40 bg-zinc-200 dark:bg-zinc-800 rounded" />
+                          <div className="h-2.5 w-28 bg-zinc-150 dark:bg-zinc-800/60 rounded" />
+                        </div>
+                        <div className="h-3.5 w-16 bg-zinc-200 dark:bg-zinc-800 rounded" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5 space-y-4">
+                  <div className="h-4 w-28 bg-zinc-200 dark:bg-zinc-800 rounded" />
+                  <div className="h-48 w-full bg-zinc-100 dark:bg-zinc-800/40 rounded-xl flex items-center justify-center">
+                    <div className="h-8 w-8 animate-spin rounded-full border-2 border-zinc-300 dark:border-zinc-700 border-t-zinc-600 dark:border-t-zinc-400" />
+                  </div>
+                  <div className="space-y-2">
+                    <div className="h-3 w-full bg-zinc-200 dark:bg-zinc-800 rounded" />
+                    <div className="h-3 w-5/6 bg-zinc-150 dark:bg-zinc-850 rounded" />
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* TAB 1: DASHBOARD */}
+              {activeTab === "dashboard" && (
             <div className="space-y-6">
               {/* Stat Metric Cards */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -1277,6 +1614,248 @@ export default function DashboardPage() {
             </div>
           )}
 
+          {/* TAB 7_SO: SALES ORDERS */}
+          {activeTab === "sales_orders" && (
+             <div className="space-y-6 animate-in fade-in duration-200">
+                <div className="flex justify-between items-center">
+                   <div>
+                      <h2 className="text-xl font-bold tracking-tight">Sales Order Management</h2>
+                      <p className="text-xs text-zinc-500 mt-1">Manage corporate accounts, track customer requests, and process physical order fulfillment.</p>
+                   </div>
+                   {(userRole === "org:admin" || userRole === "platform_admin" || userRole === "org:procurement_manager") && (
+                      <button
+                         onClick={() => {
+                            setSoCustomerId("");
+                            setSoItems([]);
+                            setShowCreateSOModal(true);
+                         }}
+                         className="flex items-center gap-1.5 px-3 py-2 bg-zinc-900 text-white dark:bg-white dark:text-black font-semibold rounded-lg text-xs hover:opacity-90 transition-all shadow-sm"
+                      >
+                         <Plus className="h-4 w-4" /> Create Sales Order
+                      </button>
+                   )}
+                </div>
+
+                {/* Filters Row */}
+                <div className="flex flex-col sm:flex-row gap-3 bg-white dark:bg-zinc-900 p-4 border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-sm">
+                   <div className="flex-1 relative">
+                      <Search className="absolute left-3 top-2.5 h-4 w-4 text-zinc-400" />
+                      <input
+                         type="text"
+                         placeholder="Search by order number or customer..."
+                         value={salesOrderSearch}
+                         onChange={(e) => setSalesOrderSearch(e.target.value)}
+                         className="w-full text-xs pl-9 pr-4 py-2 border rounded-lg focus:outline-none dark:bg-zinc-850 dark:border-zinc-700 bg-zinc-50/50 dark:bg-zinc-900/50"
+                      />
+                   </div>
+                   <div className="w-full sm:w-48">
+                         <select
+                            value={salesOrderStatusFilter}
+                            onChange={(e) => setSalesOrderStatusFilter(e.target.value)}
+                            className="w-full text-xs border rounded-lg p-2 focus:outline-none dark:bg-zinc-850 dark:border-zinc-700 bg-zinc-50/55 dark:bg-zinc-900/55"
+                         >
+                            <option value="">All Statuses</option>
+                            <option value="draft">Draft</option>
+                            <option value="approved">Approved</option>
+                            <option value="completed">Completed</option>
+                            <option value="cancelled">Cancelled</option>
+                         </select>
+                   </div>
+                </div>
+
+                {/* Main Content Grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                   {/* Left side: Sales Orders List */}
+                   <div className="lg:col-span-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl overflow-hidden shadow-sm">
+                      <div className="overflow-x-auto">
+                         <table className="w-full text-left text-xs border-collapse">
+                            <thead>
+                               <tr className="border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-850/50 text-zinc-400 font-semibold uppercase">
+                                  <th className="p-3">Order Number</th>
+                                  <th className="p-3">Customer</th>
+                                  <th className="p-3 text-right">Items Count</th>
+                                  <th className="p-3 text-right">Total Amount</th>
+                                  <th className="p-3">Status</th>
+                                  <th className="p-3 text-right">Action</th>
+                               </tr>
+                            </thead>
+                            <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                               {loadingSalesOrders ? (
+                                  <tr>
+                                     <td colSpan={6} className="p-8 text-center text-zinc-400">
+                                        <div className="flex items-center justify-center gap-2">
+                                           <Loader2 className="h-4 w-4 animate-spin text-zinc-550" />
+                                           <span>Loading sales orders...</span>
+                                        </div>
+                                     </td>
+                                  </tr>
+                               ) : salesOrders.length === 0 ? (
+                                  <tr>
+                                     <td colSpan={6} className="p-8 text-center text-zinc-450">No sales orders found.</td>
+                                  </tr>
+                               ) : (
+                                  salesOrders.map((so) => (
+                                     <tr
+                                        key={so.id}
+                                        className={`hover:bg-zinc-50/50 dark:hover:bg-zinc-850/30 cursor-pointer transition-colors ${
+                                           selectedSalesOrder?.id === so.id ? "bg-zinc-50 dark:bg-zinc-850/50" : ""
+                                        }`}
+                                        onClick={() => setSelectedSalesOrder(so)}
+                                     >
+                                        <td className="p-3 font-mono font-bold text-zinc-900 dark:text-zinc-50">{so.order_number}</td>
+                                        <td className="p-3">
+                                           <div className="font-semibold">{so.customer?.name || "Unknown Customer"}</div>
+                                           <div className="text-[10px] text-zinc-400">{so.customer?.email}</div>
+                                        </td>
+                                        <td className="p-3 text-right text-zinc-500 font-medium">
+                                           {so.items?.length || 0}
+                                        </td>
+                                        <td className="p-3 text-right font-bold text-zinc-955 dark:text-zinc-50">
+                                           ₹{(so.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                        </td>
+                                        <td className="p-3">
+                                           <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                                              so.status === "draft" ? "bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300" :
+                                              so.status === "approved" ? "bg-sky-100 text-sky-850 dark:bg-sky-950/30 dark:text-sky-400" :
+                                              so.status === "completed" ? "bg-emerald-100 text-emerald-850 dark:bg-emerald-950/30 dark:text-emerald-400" :
+                                              "bg-red-100 text-red-850 dark:bg-red-950/30 dark:text-red-400"
+                                           }`}>
+                                              {so.status}
+                                           </span>
+                                        </td>
+                                        <td className="p-3 text-right">
+                                           <button
+                                              onClick={(e) => {
+                                                 e.stopPropagation();
+                                                 setSelectedSalesOrder(so);
+                                              }}
+                                              className="px-2 py-1 text-[10px] border border-zinc-200 dark:border-zinc-800 rounded bg-white dark:bg-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-800 font-bold"
+                                           >
+                                              Details
+                                           </button>
+                                        </td>
+                                     </tr>
+                                  ))
+                               )}
+                            </tbody>
+                         </table>
+                      </div>
+                   </div>
+
+                   {/* Right side: Selected Sales Order Details Panel */}
+                   <div className="lg:col-span-1">
+                      {selectedSalesOrder ? (
+                         <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5 space-y-5 shadow-sm">
+                            <div className="flex justify-between items-start border-b border-zinc-200 dark:border-zinc-800 pb-3">
+                               <div>
+                                  <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-50">{selectedSalesOrder.order_number}</h3>
+                                  <p className="text-[10px] text-zinc-400 mt-0.5">Created at: {new Date(selectedSalesOrder.created_at).toLocaleString()}</p>
+                               </div>
+                               <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                                  selectedSalesOrder.status === "draft" ? "bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300" :
+                                  selectedSalesOrder.status === "approved" ? "bg-sky-100 text-sky-850 dark:bg-sky-950/30 dark:text-sky-400" :
+                                  selectedSalesOrder.status === "completed" ? "bg-emerald-100 text-emerald-850 dark:bg-emerald-950/30 dark:text-emerald-400" :
+                                  "bg-red-100 text-red-850 dark:bg-red-950/30 dark:text-red-400"
+                               }`}>
+                                  {selectedSalesOrder.status}
+                               </span>
+                            </div>
+
+                            {/* Customer Details */}
+                            <div className="space-y-1.5 text-xs">
+                               <h4 className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Customer Contact</h4>
+                               <div className="font-semibold text-zinc-850 dark:text-zinc-200">{selectedSalesOrder.customer?.name}</div>
+                               <div className="text-zinc-550 dark:text-zinc-400">{selectedSalesOrder.customer?.email}</div>
+                               <div className="text-zinc-550 dark:text-zinc-450">{selectedSalesOrder.customer?.phone || "No phone listed"}</div>
+                            </div>
+
+                            {/* Line Items List */}
+                            <div className="space-y-2">
+                               <h4 className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Order Items</h4>
+                               <div className="space-y-1.5 pt-1">
+                                  {selectedSalesOrder.items?.map((item: any, i: number) => {
+                                     const p = products.find(prod => prod.id === item.product_id);
+                                     return (
+                                        <div key={i} className="flex justify-between items-center text-xs py-1.5 border-b border-zinc-100 dark:border-zinc-800 last:border-0">
+                                           <div className="space-y-0.5">
+                                              <div className="font-semibold text-zinc-900 dark:text-zinc-100">{p?.name || "Product SKU"}</div>
+                                              <div className="text-[9px] text-zinc-450">Qty: {item.quantity} × ₹{(item.unit_price || 0).toFixed(2)}</div>
+                                           </div>
+                                           <div className="font-bold text-zinc-900 dark:text-zinc-200">
+                                              ₹{(item.quantity * (item.unit_price || 0)).toFixed(2)}
+                                           </div>
+                                        </div>
+                                     );
+                                  })}
+                               </div>
+                               <div className="flex justify-between items-center text-xs font-bold pt-2 border-t border-zinc-200 dark:border-zinc-800">
+                                  <span>Total Amount</span>
+                                  <span className="text-sm font-extrabold text-zinc-950 dark:text-white">
+                                     ₹{(selectedSalesOrder.total_amount || 0).toFixed(2)}
+                                  </span>
+                               </div>
+                            </div>
+
+                            {/* Actions block */}
+                            {selectedSalesOrder.status === "draft" && (userRole === "org:admin" || userRole === "platform_admin" || userRole === "org:procurement_manager") && (
+                               <div className="flex gap-2 pt-2">
+                                  <button
+                                     onClick={() => handleUpdateSOStatus(selectedSalesOrder.id, "approved")}
+                                     className="flex-1 py-2 bg-zinc-900 text-white dark:bg-white dark:text-black rounded-lg text-xs font-bold shadow-sm hover:opacity-90 transition-opacity"
+                                  >
+                                     Approve Order
+                                  </button>
+                                  <button
+                                     onClick={() => handleUpdateSOStatus(selectedSalesOrder.id, "cancelled")}
+                                     className="flex-1 py-2 border border-red-200 dark:border-red-900/50 text-red-650 dark:text-red-400 bg-red-50/50 dark:bg-red-950/20 rounded-lg text-xs font-bold hover:opacity-90 transition-opacity"
+                                  >
+                                     Cancel Order
+                                  </button>
+                                </div>
+                            )}
+
+                            {selectedSalesOrder.status === "approved" && (userRole === "org:admin" || userRole === "platform_admin" || userRole === "org:warehouse_manager") && (
+                               <div className="pt-2">
+                                  <button
+                                     onClick={() => {
+                                        setDeliverWarehouseId("");
+                                        setShowDeliverModal(true);
+                                     }}
+                                     className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-sm transition-colors"
+                                  >
+                                     Execute Order Delivery
+                                  </button>
+                               </div>
+                            )}
+
+                            {selectedSalesOrder.status === "completed" && (
+                               <div className="p-3 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/30 rounded-lg flex items-center gap-2">
+                                  <CheckCircle className="h-4 w-4 text-emerald-500 shrink-0" />
+                                  <span className="text-[10px] text-emerald-800 dark:text-emerald-400 leading-normal">
+                                     This sales order has been completely fulfilled, stock was decremented from the warehouse, and records are settled.
+                                  </span>
+                               </div>
+                            )}
+
+                            {selectedSalesOrder.status === "cancelled" && (
+                               <div className="p-3 bg-zinc-50 dark:bg-zinc-800/40 border border-zinc-150 dark:border-zinc-800 rounded-lg flex items-center gap-2">
+                                  <XCircle className="h-4 w-4 text-zinc-400 shrink-0" />
+                                  <span className="text-[10px] text-zinc-500 leading-normal">
+                                     This order has been cancelled and cannot be further processed or shipped.
+                                  </span>
+                               </div>
+                            )}
+                         </div>
+                      ) : (
+                         <div className="bg-zinc-50/50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800 border-dashed rounded-xl p-8 text-center text-zinc-400 text-xs shadow-inner">
+                            Select a sales order from the registry to view items, timeline, and dispatch operations.
+                         </div>
+                      )}
+                   </div>
+                </div>
+             </div>
+          )}
+
           {/* TAB 7: ORG ADMIN */}
           {activeTab === "org_admin" && (
             <div className="space-y-6">
@@ -1499,7 +2078,7 @@ export default function DashboardPage() {
                    <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6 max-w-2xl space-y-6 shadow-sm">
                       <div className="border-b border-zinc-200 dark:border-zinc-800 pb-4">
                          <h3 className="text-sm font-bold">Configure External Automation Engine</h3>
-                         <p className="text-[11px] text-zinc-400 mt-0.5">Choose your connection style to sync Customers, Employees, and Attendance registries.</p>
+                         <p className="text-[11px] text-zinc-400 mt-0.5">Choose your connection style to sync Customers, Employees, and Sales Orders registries.</p>
                       </div>
 
                       {/* Connection Method Selector */}
@@ -1567,12 +2146,25 @@ export default function DashboardPage() {
                                <p className="text-[9px] text-zinc-400 mt-1">Stored securely using Fernet 256-bit symmetric encryption.</p>
                             </div>
                          ) : (
-                            <div className="p-4 bg-zinc-50 dark:bg-zinc-900/40 border border-zinc-100 dark:border-zinc-800 rounded-lg">
-                               <h4 className="text-xs font-bold mb-1">Incoming Webhook Ingestion</h4>
-                               <p className="text-[10px] text-zinc-400 leading-relaxed">
-                                  Once connected, the system will generate public webhooks for each corporate event (e.g. Customer Created, Supplier Created).
-                                  Your n8n workflows can then POST JSON payloads to these URLs to keep databases synchronized in real time.
-                               </p>
+                            <div className="p-4 bg-zinc-50 dark:bg-zinc-900/40 border border-zinc-100 dark:border-zinc-800 rounded-lg space-y-4">
+                               <div>
+                                  <h4 className="text-xs font-bold mb-1">Incoming Webhook Ingestion</h4>
+                                  <p className="text-[10px] text-zinc-400 leading-relaxed">
+                                     Once connected, the system will generate public webhooks for each corporate event (e.g. Customer Created, Supplier Created).
+                                     Your n8n workflows can then POST JSON payloads to these URLs to keep databases synchronized in real time.
+                                  </p>
+                               </div>
+                               <div className="border-t border-zinc-200 dark:border-zinc-800 pt-3">
+                                  <label className="text-[10px] font-bold text-zinc-400 block mb-1">Outgoing Webhook URL (For ERP triggers)</label>
+                                  <input
+                                     type="text"
+                                     placeholder="e.g. https://n8n.company.com/webhook/..."
+                                     value={connOutgoingUrl}
+                                     onChange={(e) => setConnOutgoingUrl(e.target.value)}
+                                     className="w-full text-xs border rounded p-2 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700 bg-white dark:bg-zinc-900"
+                                  />
+                                  <p className="text-[9px] text-zinc-450 mt-1">If specified, mutations on this ERP (like Sales Order updates) will be forwarded to this webhook to trigger your n8n workflow.</p>
+                               </div>
                             </div>
                          )}
                       </div>
@@ -1625,6 +2217,12 @@ export default function DashboardPage() {
                                      <span className="font-mono text-[11px] truncate block">{activeIntegration.n8n_base_url}</span>
                                   </div>
                                )}
+                               {activeIntegration.config?.outgoing_webhook_url && (
+                                  <div>
+                                     <span className="text-[10px] font-bold text-zinc-400 block">Outgoing Webhook URL</span>
+                                     <span className="font-mono text-[11px] truncate block">{activeIntegration.config.outgoing_webhook_url}</span>
+                                  </div>
+                               )}
                                <div>
                                   <span className="text-[10px] font-bold text-zinc-400 block">Last Active Check</span>
                                   <span>
@@ -1654,7 +2252,7 @@ export default function DashboardPage() {
                                <p className="text-[10px] text-zinc-400">Use these trigger URLs in your n8n workflow webhook nodes to import data.</p>
                                
                                <div className="space-y-3 max-h-[350px] overflow-y-auto pr-1">
-                                  {["Customer Created", "Supplier Created", "Invoice Created", "Payment Completed", "Purchase Order Created", "Inventory Updated", "Attendance Synced"].map((event) => {
+                                  {["Customer Created", "Supplier Created", "Invoice Created", "Payment Completed", "Purchase Order Created", "Inventory Updated", "Sales Order Created"].map((event) => {
                                      const formattedEvent = event.toLowerCase().replace(/\s+/g, "_");
                                      const url = `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/integrations/incoming-webhook/${activeIntegration.id}/${formattedEvent}`;
                                      return (
@@ -1698,7 +2296,7 @@ export default function DashboardPage() {
                                      >
                                         <option value="customers">Customers</option>
                                         <option value="employees">Employees</option>
-                                        <option value="attendance">Attendance Records</option>
+                                        <option value="sales_orders">Sales Orders</option>
                                      </select>
                                   </div>
 
@@ -1870,6 +2468,8 @@ export default function DashboardPage() {
                    </div>
                 )}
              </div>
+          )}
+            </>
           )}
 
         </div>
@@ -2334,6 +2934,168 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {/* 9. User Profile Settings Modal */}
+      {showProfileModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+           <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl w-full max-w-md p-6 space-y-4 shadow-xl">
+              <div className="flex justify-between items-center border-b border-zinc-150 dark:border-zinc-800 pb-3">
+                 <div className="flex items-center gap-2">
+                    <User className="h-5 w-5 text-zinc-500" />
+                    <h3 className="text-sm font-bold text-zinc-800 dark:text-zinc-100">Profile Settings</h3>
+                 </div>
+                 <button onClick={() => setShowProfileModal(false)} className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-205">✕</button>
+              </div>
+              <form onSubmit={handleUpdateProfile} className="space-y-4 text-xs">
+                 <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                       <label className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 block uppercase">First Name</label>
+                       <input
+                          type="text"
+                          required
+                          value={profileFirstName}
+                          onChange={(e) => setProfileFirstName(e.target.value)}
+                          placeholder="First Name"
+                          className="w-full text-xs border rounded p-2 bg-zinc-55 dark:bg-zinc-800 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+                       />
+                    </div>
+                    <div className="space-y-1">
+                       <label className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 block uppercase">Last Name</label>
+                       <input
+                          type="text"
+                          required
+                          value={profileLastName}
+                          onChange={(e) => setProfileLastName(e.target.value)}
+                          placeholder="Last Name"
+                          className="w-full text-xs border rounded p-2 bg-zinc-55 dark:bg-zinc-800 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+                       />
+                    </div>
+                 </div>
+
+                 <div className="border-t border-zinc-150 dark:border-zinc-800 pt-3 space-y-3">
+                    <h4 className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-wide flex items-center gap-1.5">
+                       <Lock className="h-3 w-3" />
+                       Change Password (optional)
+                    </h4>
+                    
+                    <div className="space-y-1.5">
+                       <label className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 block">Current Password</label>
+                       <input
+                          type="password"
+                          value={profileCurrentPassword}
+                          onChange={(e) => setProfileCurrentPassword(e.target.value)}
+                          placeholder="••••••••"
+                          className="w-full text-xs border rounded p-2 bg-zinc-55 dark:bg-zinc-800 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+                       />
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-3">
+                       <div className="space-y-1.5">
+                          <label className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 block">New Password</label>
+                          <input
+                             type="password"
+                             value={profileNewPassword}
+                             onChange={(e) => setProfileNewPassword(e.target.value)}
+                             placeholder="••••••••"
+                             className="w-full text-xs border rounded p-2 bg-zinc-55 dark:bg-zinc-800 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+                          />
+                       </div>
+                       <div className="space-y-1.5">
+                          <label className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 block">Confirm New Password</label>
+                          <input
+                             type="password"
+                             value={profileConfirmNewPassword}
+                             onChange={(e) => setProfileConfirmNewPassword(e.target.value)}
+                             placeholder="••••••••"
+                             className="w-full text-xs border rounded p-2 bg-zinc-55 dark:bg-zinc-800 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+                          />
+                       </div>
+                    </div>
+                 </div>
+                 
+                 <div className="flex justify-end gap-2 pt-3 border-t border-zinc-150 dark:border-zinc-800">
+                    <button
+                       type="button"
+                       onClick={() => setShowProfileModal(false)}
+                       className="px-4 py-2 border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-650 dark:text-zinc-400 rounded-lg font-bold"
+                    >
+                       Cancel
+                    </button>
+                    <button
+                       type="submit"
+                       disabled={isSubmittingProfile}
+                       className="px-4 py-2 bg-zinc-900 hover:bg-zinc-800 text-white dark:bg-white dark:text-black dark:hover:bg-zinc-100 rounded-lg font-bold disabled:opacity-50"
+                    >
+                       {isSubmittingProfile ? "Saving..." : "Save Changes"}
+                    </button>
+                 </div>
+              </form>
+           </div>
+        </div>
+      )}
+
+      {/* 10. Mandatory First-Time Password Change Modal */}
+      {showForcePasswordChangeModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+           <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl w-full max-w-md p-6 space-y-4 shadow-2xl animate-in fade-in zoom-in duration-200">
+              <div className="text-center space-y-2 pb-2 border-b border-zinc-150 dark:border-zinc-800">
+                 <div className="h-12 w-12 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center mx-auto text-amber-600 dark:text-amber-400 mb-2">
+                    <Shield className="h-6 w-6 animate-pulse" />
+                 </div>
+                 <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">Set Secure Password</h3>
+                 <p className="text-xs text-zinc-500 dark:text-zinc-450 max-w-sm mx-auto">
+                    This is your first login using system-generated credentials. To secure your account, please set a new password.
+                 </p>
+              </div>
+              <form onSubmit={handleForcePasswordChange} className="space-y-4 text-xs">
+                 <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 block uppercase">Current Password</label>
+                    <input
+                       type="password"
+                       required
+                       value={forceCurrentPassword}
+                       onChange={(e) => setForceCurrentPassword(e.target.value)}
+                       placeholder="••••••••"
+                       className="w-full text-xs border rounded p-2 bg-zinc-55 dark:bg-zinc-800 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+                    />
+                 </div>
+                 <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 block uppercase">New Password</label>
+                    <input
+                       type="password"
+                       required
+                       value={forceNewPassword}
+                       onChange={(e) => setForceNewPassword(e.target.value)}
+                       placeholder="••••••••"
+                       className="w-full text-xs border rounded p-2 bg-zinc-55 dark:bg-zinc-800 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+                    />
+                 </div>
+                 <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 block uppercase">Confirm New Password</label>
+                    <input
+                       type="password"
+                       required
+                       value={forceConfirmNewPassword}
+                       onChange={(e) => setForceConfirmNewPassword(e.target.value)}
+                       placeholder="••••••••"
+                       className="w-full text-xs border rounded p-2 bg-zinc-55 dark:bg-zinc-800 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+                    />
+                 </div>
+                 
+                 <div className="pt-3 border-t border-zinc-150 dark:border-zinc-800">
+                    <button
+                       type="submit"
+                       disabled={isSubmittingForcePassword}
+                       className="w-full py-2.5 bg-zinc-900 hover:bg-zinc-800 text-white dark:bg-white dark:text-black dark:hover:bg-zinc-100 rounded-lg font-bold disabled:opacity-50 flex items-center justify-center gap-1.5 text-xs"
+                    >
+                       <Key className="h-3.5 w-3.5" />
+                       {isSubmittingForcePassword ? "Updating password..." : "Update Password & Continue"}
+                    </button>
+                 </div>
+              </form>
+           </div>
+        </div>
+      )}
+
       {/* 8. Report an Issue / Support Ticket Modal */}
       {showSupportModal && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
@@ -2402,6 +3164,191 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {/* 11. Create Sales Order Modal */}
+      {showCreateSOModal && (
+         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl w-full max-w-lg p-6 space-y-4 shadow-xl">
+               <div className="flex justify-between items-center border-b border-zinc-150 dark:border-zinc-800 pb-3">
+                  <h3 className="text-sm font-bold text-zinc-850 dark:text-zinc-100">Draft New Sales Order</h3>
+                  <button onClick={() => setShowCreateSOModal(false)} className="text-zinc-400 hover:text-zinc-650 dark:hover:text-zinc-200">✕</button>
+               </div>
+               <form onSubmit={handleCreateSalesOrder} className="space-y-4 text-xs">
+                  {/* Customer selection */}
+                  <div className="space-y-1">
+                     <label className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 block uppercase">Select Customer</label>
+                     <select
+                        required
+                        value={soCustomerId}
+                        onChange={(e) => setSoCustomerId(e.target.value)}
+                        className="w-full text-xs border rounded p-2 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100"
+                     >
+                        <option value="">-- Choose Customer --</option>
+                        {customers.map(c => (
+                           <option key={c.id} value={c.id}>{c.name} ({c.email})</option>
+                        ))}
+                     </select>
+                  </div>
+
+                  {/* Product items selection row */}
+                  <div className="space-y-2">
+                     <div className="flex justify-between items-center">
+                        <label className="text-[10px] font-bold text-zinc-400 block uppercase">Order Items</label>
+                        <button
+                           type="button"
+                           onClick={() => {
+                              setSoItems([...soItems, { product_id: products[0]?.id || "", quantity: 1, unit_price: products[0]?.sellingPrice || 0 }]);
+                           }}
+                           className="px-2 py-1 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-850 dark:text-zinc-200 rounded text-[10px] font-bold"
+                        >
+                           + Add Item
+                        </button>
+                     </div>
+
+                     {soItems.length === 0 ? (
+                        <p className="text-[10px] text-zinc-400 italic py-3 text-center border border-dashed rounded dark:border-zinc-800">No items added to the sales order yet.</p>
+                     ) : (
+                        <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                           {soItems.map((item, idx) => (
+                              <div key={idx} className="flex gap-2 items-end">
+                                 <div className="flex-1 min-w-0">
+                                    <select
+                                       value={item.product_id}
+                                       onChange={(e) => {
+                                          const pid = e.target.value;
+                                          const prod = products.find(p => p.id === pid);
+                                          const updated = [...soItems];
+                                          updated[idx] = {
+                                             ...updated[idx],
+                                             product_id: pid,
+                                             unit_price: prod?.sellingPrice || 0
+                                          };
+                                          setSoItems(updated);
+                                       }}
+                                       className="w-full text-xs border rounded p-1.5 dark:bg-zinc-850 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100"
+                                    >
+                                       {products.map(p => (
+                                          <option key={p.id} value={p.id}>{p.name} (Stock: {inventory.find(i => i.productId === p.id)?.currentStock || 0})</option>
+                                       ))}
+                                    </select>
+                                 </div>
+                                 <div className="w-16">
+                                    <input
+                                       type="number"
+                                       min="1"
+                                       placeholder="Qty"
+                                       value={item.quantity}
+                                       onChange={(e) => {
+                                          const updated = [...soItems];
+                                          updated[idx].quantity = Math.max(1, Number(e.target.value));
+                                          setSoItems(updated);
+                                       }}
+                                       className="w-full text-xs border rounded p-1.5 dark:bg-zinc-850 dark:border-zinc-700 text-center text-zinc-900 dark:text-zinc-100"
+                                    />
+                                 </div>
+                                 <div className="w-20">
+                                    <input
+                                       type="number"
+                                       min="0.01"
+                                       step="0.01"
+                                       placeholder="Price"
+                                       value={item.unit_price}
+                                       onChange={(e) => {
+                                          const updated = [...soItems];
+                                          updated[idx].unit_price = Number(e.target.value);
+                                          setSoItems(updated);
+                                       }}
+                                       className="w-full text-xs border rounded p-1.5 dark:bg-zinc-850 dark:border-zinc-700 text-right text-zinc-900 dark:text-zinc-100"
+                                    />
+                                 </div>
+                                 <button
+                                    type="button"
+                                    onClick={() => {
+                                       setSoItems(soItems.filter((_, i) => i !== idx));
+                                    }}
+                                    className="p-1.5 bg-red-50 text-red-500 rounded border border-red-100 hover:bg-red-100 dark:bg-red-950/20 dark:border-red-900/30 text-xs"
+                                 >
+                                    ✕
+                                 </button>
+                              </div>
+                           ))}
+                        </div>
+                     )}
+                  </div>
+
+                  <div className="flex justify-between items-center text-xs font-bold pt-2 border-t border-zinc-200 dark:border-zinc-850">
+                     <span>Estimated Total</span>
+                     <span className="text-sm font-extrabold text-zinc-950 dark:text-white">
+                        ₹{soItems.reduce((acc, item) => acc + (item.quantity * item.unit_price), 0).toFixed(2)}
+                     </span>
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-3 border-t border-zinc-150 dark:border-zinc-800">
+                     <button
+                        type="button"
+                        onClick={() => setShowCreateSOModal(false)}
+                        className="px-4 py-2 border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-650 dark:text-zinc-400 rounded-lg font-bold"
+                     >
+                        Cancel
+                     </button>
+                     <button
+                        type="submit"
+                        disabled={isSubmittingSO}
+                        className="px-4 py-2 bg-zinc-900 hover:bg-zinc-800 text-white dark:bg-white dark:text-black dark:hover:bg-zinc-100 rounded-lg font-bold disabled:opacity-50"
+                     >
+                        {isSubmittingSO ? "Creating..." : "Save Draft SO"}
+                     </button>
+                  </div>
+               </form>
+            </div>
+         </div>
+      )}
+
+      {/* 12. Deliver Sales Order Modal */}
+      {showDeliverModal && (
+         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl w-full max-w-sm p-6 space-y-4 shadow-xl">
+               <div className="flex justify-between items-center border-b border-zinc-150 dark:border-zinc-800 pb-3">
+                  <h3 className="text-sm font-bold text-zinc-800 dark:text-zinc-100">Fulfill & Deliver Order</h3>
+                  <button onClick={() => setShowDeliverModal(false)} className="text-zinc-400 hover:text-zinc-650 dark:hover:text-zinc-205">✕</button>
+               </div>
+               <form onSubmit={handleDeliverSO} className="space-y-4 text-xs">
+                  <p className="text-zinc-450 leading-relaxed text-[11px]">
+                     Select the originating warehouse where stock for these items should be decremented to fulfill this shipment.
+                  </p>
+                  <div className="space-y-1">
+                     <label className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 block uppercase">Warehouse location</label>
+                     <select
+                        required
+                        value={deliverWarehouseId}
+                        onChange={(e) => setDeliverWarehouseId(e.target.value)}
+                        className="w-full text-xs border rounded p-2 focus:outline-none dark:bg-zinc-800 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100"
+                     >
+                        <option value="">-- Choose Warehouse --</option>
+                        {warehouses.map(w => (
+                           <option key={w.id} value={w.id}>{w.name} ({w.location})</option>
+                        ))}
+                     </select>
+                  </div>
+                  <div className="flex justify-end gap-2 pt-3 border-t border-zinc-150 dark:border-zinc-800">
+                     <button
+                        type="button"
+                        onClick={() => setShowDeliverModal(false)}
+                        className="px-4 py-2 border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-650 dark:text-zinc-400 rounded-lg font-bold"
+                     >
+                        Cancel
+                     </button>
+                     <button
+                        type="submit"
+                        disabled={isSubmittingDeliver}
+                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold disabled:opacity-50"
+                     >
+                        {isSubmittingDeliver ? "Delivering..." : "Deliver Shipment"}
+                     </button>
+                  </div>
+               </form>
+            </div>
+         </div>
+      )}
     </div>
   );
 }

@@ -167,71 +167,90 @@ export default function SignInPage() {
           </div>
 
           {/* Form Card */}
-          <div className="bg-slate-900/80 border border-slate-800 shadow-2xl shadow-black/50 backdrop-blur-sm rounded-2xl p-8 space-y-6">
-            {error && (
-              <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-xs rounded-lg p-3 text-center">
-                {error}
-              </div>
-            )}
-
-            <form onSubmit={handleLogin} className="space-y-4">
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-300">Email Address</label>
-                <div className="relative">
-                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
-                    <Mail className="w-4 h-4" />
-                  </span>
-                  <input
-                    type="email"
-                    required
-                    placeholder="name@company.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="w-full bg-slate-950/60 border border-slate-800 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl py-2.5 pl-10 pr-4 text-sm text-white placeholder-slate-600 transition-all duration-250 outline-none"
-                  />
+          {loading ? (
+            <div className="bg-slate-900/80 border border-slate-800 shadow-2xl shadow-black/50 backdrop-blur-sm rounded-2xl p-8 space-y-6 animate-pulse">
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <div className="h-3 w-24 bg-slate-800 rounded" />
+                  <div className="h-10 w-full bg-slate-950/60 border border-slate-800/80 rounded-xl" />
+                </div>
+                <div className="space-y-2">
+                  <div className="h-3 w-16 bg-slate-800 rounded" />
+                  <div className="h-10 w-full bg-slate-950/60 border border-slate-800/80 rounded-xl" />
+                </div>
+                <div className="h-10 w-full bg-blue-600/20 border border-blue-500/20 rounded-xl flex items-center justify-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
+                  <span className="text-xs font-semibold text-blue-400">Authenticating...</span>
                 </div>
               </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-300">Password</label>
-                <div className="relative">
-                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
-                    <Lock className="w-4 h-4" />
-                  </span>
-                  <input
-                    type={showPassword ? "text" : "password"}
-                    required
-                    placeholder="••••••••"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full bg-slate-950/60 border border-slate-800 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl py-2.5 pl-10 pr-10 text-sm text-white placeholder-slate-600 transition-all duration-250 outline-none"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-500 hover:text-slate-300 transition-colors"
-                  >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
+            </div>
+          ) : (
+            <div className="bg-slate-900/80 border border-slate-800 shadow-2xl shadow-black/50 backdrop-blur-sm rounded-2xl p-8 space-y-6">
+              {error && (
+                <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-xs rounded-lg p-3 text-center">
+                  {error}
                 </div>
-              </div>
+              )}
 
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-xl py-2.5 text-sm transition-all duration-250 flex items-center justify-center gap-2 cursor-pointer shadow-[0_4px_12px_rgba(37,99,235,0.2)] disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {loading ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Signing In...
-                  </>
-                ) : (
-                  "Sign In"
-                )}
-              </button>
-            </form>
-          </div>
+              <form onSubmit={handleLogin} className="space-y-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-300">Email Address</label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+                      <Mail className="w-4 h-4" />
+                    </span>
+                    <input
+                      type="email"
+                      required
+                      placeholder="name@company.com"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="w-full bg-slate-950/60 border border-slate-800 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl py-2.5 pl-10 pr-4 text-sm text-white placeholder-slate-600 transition-all duration-250 outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-300">Password</label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+                      <Lock className="w-4 h-4" />
+                    </span>
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      required
+                      placeholder="••••••••"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="w-full bg-slate-950/60 border border-slate-800 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl py-2.5 pl-10 pr-10 text-sm text-white placeholder-slate-600 transition-all duration-250 outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-500 hover:text-slate-300 transition-colors"
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-xl py-2.5 text-sm transition-all duration-250 flex items-center justify-center gap-2 cursor-pointer shadow-[0_4px_12px_rgba(37,99,235,0.2)] disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Signing In...
+                    </>
+                  ) : (
+                    "Sign In"
+                  )}
+                </button>
+              </form>
+            </div>
+          )}
         </div>
       </motion.div>
     </div>

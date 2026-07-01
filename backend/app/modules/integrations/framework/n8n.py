@@ -68,7 +68,7 @@ class N8NConnector(BaseConnector):
                     },
                     {
                         "id": "wf-2",
-                        "name": "Daily Attendance Sync",
+                        "name": "Daily Sales Order Sync",
                         "active": True,
                         "createdAt": "2026-02-15T00:00:00Z",
                         "updatedAt": "2026-06-27T08:00:00Z",
@@ -180,11 +180,9 @@ class N8NConnector(BaseConnector):
                 {"name": "Neha Sharma", "email": "neha@supplier-erp.local", "role": "Accountant", "department_name": "Finance"},
                 {"name": "Rajesh Kumar", "email": "rajesh@supplier-erp.local", "role": "Employee", "department_name": "Inventory"}
             ]
-        elif target_type == "attendance":
+        elif target_type == "sales_orders":
             return [
-                {"employee_email": "vikram@supplier-erp.local", "date": "2026-06-27", "check_in": "08:55:00", "check_out": "18:05:00", "status": "present"},
-                {"employee_email": "neha@supplier-erp.local", "date": "2026-06-27", "check_in": "09:15:00", "check_out": "17:30:00", "status": "late"},
-                {"employee_email": "rajesh@supplier-erp.local", "date": "2026-06-27", "check_in": "", "check_out": "", "status": "absent"}
+                {"so_number": "SO-2026-0001", "customer_email": "billing@acmebuilders.com", "status": "approved", "total_amount": 75000.00, "items": [{"sku": "STEEL-12MM-ROD", "quantity": 1, "unit_price": 75000.00}]}
             ]
         elif target_type == "purchase_orders":
             return [

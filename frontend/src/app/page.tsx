@@ -11,6 +11,7 @@ import {
   CreditCard,
   FileText,
   UserCheck,
+  ShoppingBag,
   BarChart3,
   TrendingUp,
   Building,
@@ -122,10 +123,10 @@ export default function LandingPage() {
       description: "Create purchase invoices, record bank payments, and monitor outstanding accounts payable effortlessly."
     },
     {
-      title: "Attendance Tracker",
-      icon: UserCheck,
-      color: "from-green-500 to-emerald-500",
-      description: "Monitor team shifts, check-ins, and task assignments with strict multi-tenant data boundaries."
+      title: "Sales Order Management",
+      icon: ShoppingBag,
+      color: "from-pink-500 to-rose-500",
+      description: "Receive orders from customers, verify stock levels, record shipment status, and trigger automated n8n workflows."
     },
     {
       title: "Analytical Reports",

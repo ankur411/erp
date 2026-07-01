@@ -1,7 +1,7 @@
 import jwt
 import requests
 import hashlib
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import Depends, HTTPException, Security, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyHeader
 from typing import Dict, List, Optional
@@ -40,7 +40,7 @@ def create_access_token(user_id: str, email: str, org_id: Optional[str] = None, 
         "email": email,
         "org_id": org_id,
         "org_role": org_role,
-        "exp": datetime.utcnow() + timedelta(days=7),
+        "exp": datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=7),
         "iss": "supplier-erp-local-auth"
     }
     return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm="HS256")
@@ -90,7 +90,7 @@ async def get_current_user(
             )
             
         # Check expiry
-        if api_key_obj.expires_at and api_key_obj.expires_at < datetime.utcnow():
+        if api_key_obj.expires_at and api_key_obj.expires_at < datetime.now(timezone.utc).replace(tzinfo=None):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="API Key has expired."
@@ -100,7 +100,7 @@ async def get_current_user(
         await db.execute(
             update(ApiKey)
             .where(ApiKey.id == api_key_obj.id)
-            .values(last_used_at=datetime.utcnow())
+            .values(last_used_at=datetime.now(timezone.utc).replace(tzinfo=None))
             .execution_options(skip_tenant_filter=True)
         )
         await db.commit()

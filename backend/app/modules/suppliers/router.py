@@ -51,6 +51,23 @@ async def create_supplier(
     db.add(db_obj)
     await db.commit()
     await db.refresh(db_obj)
+
+    try:
+        from app.modules.integrations.services import forward_webhook_to_n8n
+        import asyncio
+        asyncio.create_task(forward_webhook_to_n8n(
+            tenant_id=db_obj.tenant_id,
+            event_name="supplier.created",
+            data={
+                "id": db_obj.id,
+                "name": db_obj.name,
+                "email": db_obj.email,
+                "status": db_obj.status
+            }
+        ))
+    except Exception:
+        pass
+
     return db_obj
 
 @router.get("/", response_model=SupplierListResponse, dependencies=[require_viewer])
@@ -200,6 +217,23 @@ async def update_supplier(
 
     await db.commit()
     await db.refresh(db_obj)
+
+    try:
+        from app.modules.integrations.services import forward_webhook_to_n8n
+        import asyncio
+        asyncio.create_task(forward_webhook_to_n8n(
+            tenant_id=db_obj.tenant_id,
+            event_name="supplier.updated",
+            data={
+                "id": db_obj.id,
+                "name": db_obj.name,
+                "email": db_obj.email,
+                "status": db_obj.status
+            }
+        ))
+    except Exception:
+        pass
+
     return db_obj
 
 @router.delete("/{supplier_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[require_admin])

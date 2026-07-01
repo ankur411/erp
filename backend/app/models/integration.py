@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy import String, DateTime, ForeignKey, JSON, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -7,6 +7,9 @@ from app.database import Base, HasTenant
 
 def generate_uuid() -> str:
     return str(uuid.uuid4())
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 class Integration(Base, HasTenant):
     __tablename__ = "integrations"
@@ -27,8 +30,8 @@ class Integration(Base, HasTenant):
     last_connected_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
     
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
     sync_histories: Mapped[list["IntegrationSyncHistory"]] = relationship(
         "IntegrationSyncHistory", 
@@ -54,7 +57,7 @@ class IntegrationSyncHistory(Base, HasTenant):
     sync_details: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     
     error_message: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
-    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     integration: Mapped[Integration] = relationship("Integration", back_populates="sync_histories")
@@ -67,7 +70,7 @@ class Customer(Base, HasTenant):
     company_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
 class Employee(Base, HasTenant):
     __tablename__ = "employees"
@@ -77,15 +80,5 @@ class Employee(Base, HasTenant):
     email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     role: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     department_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
-class Attendance(Base, HasTenant):
-    __tablename__ = "attendance"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
-    employee_email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    date: Mapped[str] = mapped_column(String(50), nullable=False) # e.g. "2026-06-27"
-    check_in: Mapped[Optional[str]] = mapped_column(String(50), nullable=True) # e.g. "09:00:00"
-    check_out: Mapped[Optional[str]] = mapped_column(String(50), nullable=True) # e.g. "17:00:00"
-    status: Mapped[str] = mapped_column(String(50), default="present", nullable=False) # present, absent, late, leave
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

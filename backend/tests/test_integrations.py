@@ -3,7 +3,7 @@ from sqlalchemy import select
 from app.database import tenant_context, user_context
 from app.core.auth import require_org, UserSession
 from app.models.system import Organization
-from app.models.integration import Integration, IntegrationSyncHistory, Customer, Employee, Attendance
+from app.models.integration import Integration, IntegrationSyncHistory, Customer, Employee
 from app.models.supplier import Supplier
 from app.models.inventory import Product
 from app.modules.integrations.services import encrypt_val, decrypt_val, execute_sync, rollback_sync
@@ -28,7 +28,6 @@ async def setup_test_org(db_session):
     await db_session.execute(Supplier.__table__.delete())
     await db_session.execute(Product.__table__.delete())
     await db_session.execute(Employee.__table__.delete())
-    await db_session.execute(Attendance.__table__.delete())
     await db_session.execute(IntegrationSyncHistory.__table__.delete())
     await db_session.execute(Integration.__table__.delete())
     await db_session.commit()

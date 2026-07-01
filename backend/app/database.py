@@ -1,5 +1,5 @@
 from contextvars import ContextVar
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import AsyncGenerator, Optional
 from sqlalchemy import String, DateTime, event
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
@@ -80,10 +80,10 @@ class HasTenant:
         return mapped_column(String(36), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
+        DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None), nullable=False
     )
 
 # Event listener to automatically enforce tenant isolation on SELECT/UPDATE/DELETE queries

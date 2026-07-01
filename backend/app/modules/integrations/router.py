@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -285,7 +285,7 @@ async def incoming_webhook_receiver(
         "payment completed": "payments",
         "purchase order created": "purchase_orders",
         "inventory updated": "products",
-        "attendance synced": "attendance"
+        "sales order created": "sales_orders"
     }
 
     target_type = event_mapping.get(event_name.lower().replace("_", " ").replace("-", " "), "customers")
@@ -342,7 +342,7 @@ async def incoming_webhook_receiver(
             "created_ids": created_ids,
             "updated_original_values": updated_original_values
         }
-        sync_run.completed_at = datetime.utcnow()
+        sync_run.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
         await db.commit()
 
         return {"status": "success", "processed": records_processed, "sync_id": sync_run.id}
@@ -351,7 +351,7 @@ async def incoming_webhook_receiver(
         await db.rollback()
         sync_run.status = "failed"
         sync_run.error_message = f"Webhook processing failed: {str(e)}"
-        sync_run.completed_at = datetime.utcnow()
+        sync_run.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
         await db.commit()
         raise HTTPException(status_code=400, detail=str(e))
     finally:

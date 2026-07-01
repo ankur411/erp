@@ -1,7 +1,7 @@
 import uuid
 import json
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Header, Request, Query, Response, status
 from sqlalchemy import select, text
@@ -27,7 +27,7 @@ from app.modules.system.schemas import (
     PlatformHistoryResponse, PlatformHistoryDataPoint, AuditLogResponse,
     OrganizationRequestCreate, OrganizationRequestResponse, OrganizationRequestAction,
     DepartmentCreate, DepartmentResponse, InvitationCreate, InvitationResponse,
-    AuthMeResponse, ClerkSyncResult, MakeAdminRequest, LoginRequest, LoginResponse,
+    AuthMeResponse, ClerkSyncResult, MakeAdminRequest, LoginRequest, LoginResponse, ProfileUpdateRequest,
     SupportTicketCreate, SupportTicketResponse, SupportTicketUpdate,
     SystemHealthResponse, SystemHealthService, SystemHealthTelemetry
 )
@@ -149,7 +149,7 @@ async def auth_me(
 
     # 2. If user exists, update last_login_at and return full context
     if user:
-        user.last_login_at = datetime.utcnow()
+        user.last_login_at = datetime.now(timezone.utc).replace(tzinfo=None)
         # Also update email if it changed
         if current_user.email:
             user.email = current_user.email
@@ -175,7 +175,8 @@ async def auth_me(
             clerk_org_id=org.clerk_org_id if org else None,
             status=user.status,
             is_platform_admin=(user.role == "platform_admin"),
-            page_permissions=user.page_permissions
+            page_permissions=user.page_permissions,
+            password_change_required=user.password_change_required
         )
     
     raise HTTPException(
@@ -207,7 +208,7 @@ async def auth_login(
             first_name="Platform",
             last_name="Admin",
             clerk_user_id="local_admin",
-            last_login_at=datetime.utcnow()
+            last_login_at=datetime.now(timezone.utc).replace(tzinfo=None)
         )
         db.add(admin_user)
         await db.commit()
@@ -225,7 +226,7 @@ async def auth_login(
         )
 
     # 3. Update last login
-    user.last_login_at = datetime.utcnow()
+    user.last_login_at = datetime.now(timezone.utc).replace(tzinfo=None)
     await db.commit()
     await db.refresh(user)
 
@@ -243,7 +244,8 @@ async def auth_login(
         email=user.email,
         role=user.role,
         org_id=user.tenant_id,
-        is_platform_admin=(user.role == "platform_admin")
+        is_platform_admin=(user.role == "platform_admin"),
+        password_change_required=user.password_change_required
     )
 
 
@@ -401,7 +403,7 @@ async def sync_clerk_users(
                             role=clerk_role,
                             status="active",
                             last_login_at=last_login_dt,
-                            created_at=created_at_dt or datetime.utcnow()
+                            created_at=created_at_dt or datetime.now(timezone.utc).replace(tzinfo=None)
                         )
                         db.add(new_user)
                         created += 1
@@ -778,7 +780,7 @@ async def get_platform_analytics_history(
     Get platform-wide aggregated analytics history for the last 6 months.
     """
     import calendar
-    today = datetime.utcnow()
+    today = datetime.now(timezone.utc).replace(tzinfo=None)
     months = []
     for i in range(5, -1, -1):
         year = today.year
@@ -1093,7 +1095,8 @@ async def invite_user(
         first_name=invite_in.first_name,
         last_name=invite_in.last_name,
         role=invite_in.role,
-        password_hash=hash_password(temp_password)
+        password_hash=hash_password(temp_password),
+        password_change_required=True
     )
     db.add(db_user)
     await db.commit()
@@ -1257,7 +1260,7 @@ async def create_api_key(
     # Calculate expiry
     expires_at = None
     if key_in.expires_in_days:
-        expires_at = datetime.utcnow() + timedelta(days=key_in.expires_in_days)
+        expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=key_in.expires_in_days)
 
     # 2. Save in database
     api_key_obj = ApiKey(
@@ -1736,14 +1739,15 @@ async def create_invitation(
         role=invite_in.role,
         department_id=invite_in.department_id,
         page_permissions=invite_in.page_permissions,
-        password_hash=hash_password(temp_password)
+        password_hash=hash_password(temp_password),
+        password_change_required=True
     )
     db.add(db_user)
     await db.commit()
     await db.refresh(db_user)
 
     from datetime import timedelta
-    expires_at = datetime.utcnow() + timedelta(days=7)
+    expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=7)
 
     invitation = OrganizationInvitation(
         tenant_id=org.id,
@@ -2002,13 +2006,80 @@ async def get_system_health(
         SystemHealthService(name="Background Jobs", type="jobs", status=jobs_status, latency=jobs_latency, uptime="99.91%", details=jobs_details),
     ]
 
-    import random
+    import psutil
+    try:
+        cpu_percent = float(psutil.cpu_percent(interval=None))
+        ram_percent = float(psutil.virtual_memory().percent)
+    except Exception:
+        cpu_percent = 25.0
+        ram_percent = 60.0
+
+    try:
+        latency_val = int(db_latency.replace("ms", "")) if db_status == "healthy" else 15
+    except ValueError:
+        latency_val = 15
+
+    try:
+        proc = psutil.Process()
+        conns = proc.net_connections(kind="inet")
+        active_conns = len([c for c in conns if c.status == "ESTABLISHED"])
+        if active_conns == 0:
+            # Fallback to system-wide connections count if process connections is zero or restricted
+            try:
+                active_conns = len([c for c in psutil.net_connections(kind="inet") if c.status == "ESTABLISHED"])
+            except Exception:
+                active_conns = 42
+    except Exception:
+        active_conns = 42
+
     telemetry = SystemHealthTelemetry(
-        cpu=random.randint(15, 45),
-        ram=random.randint(58, 68),
-        latency=random.randint(12, 28),
-        activeConnections=random.randint(110, 160)
+        cpu=int(cpu_percent),
+        ram=int(ram_percent),
+        latency=latency_val,
+        activeConnections=active_conns
     )
 
     return SystemHealthResponse(services=services, telemetry=telemetry)
+
+
+@router.put("/auth/profile", status_code=status.HTTP_200_OK)
+async def update_profile(
+    req: ProfileUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSession = Depends(require_auth)
+):
+    """
+    Allow any logged-in user to update their own first name, last name, or change their password.
+    """
+    user_stmt = select(User).where(
+        (User.id == current_user.user_id) | (User.clerk_user_id == current_user.user_id)
+    ).execution_options(skip_tenant_filter=True)
+    user_res = await db.execute(user_stmt)
+    user = user_res.scalars().first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if req.first_name is not None:
+        user.first_name = req.first_name
+    if req.last_name is not None:
+        user.last_name = req.last_name
+
+    if req.new_password is not None and req.new_password != "":
+        if user.password_hash and not user.password_change_required:
+            if not req.current_password or not verify_password(req.current_password, user.password_hash):
+                raise HTTPException(status_code=400, detail="Incorrect current password")
+        
+        user.password_hash = hash_password(req.new_password)
+        user.password_change_required = False
+
+    await db.commit()
+    await db.refresh(user)
+
+    return {
+        "status": "success",
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "email": user.email,
+        "password_change_required": user.password_change_required
+    }
 

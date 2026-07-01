@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Optional
 from sqlalchemy import String, Numeric, ForeignKey, Date, DateTime
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -7,6 +7,9 @@ from app.database import Base, HasTenant
 
 def generate_uuid() -> str:
     return str(uuid.uuid4())
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 class Invoice(Base, HasTenant):
     __tablename__ = "invoices"
@@ -34,7 +37,7 @@ class Payment(Base, HasTenant):
     payment_method: Mapped[str] = mapped_column(String(50), nullable=False) # 'BANK_TRANSFER', 'CASH', 'CREDIT_CARD', 'ACH'
     status: Mapped[str] = mapped_column(String(50), default="completed", nullable=False)
     transaction_reference: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    paid_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    paid_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
     invoice: Mapped[Invoice] = relationship("Invoice", back_populates="payments")
 

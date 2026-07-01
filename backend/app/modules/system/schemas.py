@@ -135,6 +135,12 @@ class UserUpdateRequest(BaseModel):
     status: Optional[str] = None
     password: Optional[str] = None
 
+class ProfileUpdateRequest(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    current_password: Optional[str] = None
+    new_password: Optional[str] = None
+
 class UserOrgUpdateRequest(BaseModel):
     role: Optional[str] = None
     page_permissions: Optional[dict] = None
@@ -152,6 +158,7 @@ class LoginResponse(BaseModel):
     role: str
     org_id: Optional[str] = None
     is_platform_admin: bool = False
+    password_change_required: bool = False
 
 class AuthMeResponse(BaseModel):
     """Returned by POST /auth/me — tells the frontend where to redirect."""
@@ -168,6 +175,7 @@ class AuthMeResponse(BaseModel):
     status: str = "active"
     is_platform_admin: bool = False
     page_permissions: Optional[dict] = None
+    password_change_required: bool = False
 
 
 
